@@ -9,15 +9,18 @@ collisions with Python's reserved LogRecord attribute names.
 import json
 import logging
 import sys
+import threading
 from datetime import datetime, timezone
 
 import config
+
+_logger_lock = threading.Lock()
 
 
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "event": record.getMessage(),
@@ -32,24 +35,25 @@ class _JsonFormatter(logging.Formatter):
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
-    if logger.handlers:
-        return logger
+    with _logger_lock:
+        if logger.handlers:
+            return logger
 
-    level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
-    logger.setLevel(level)
+        level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
+        logger.setLevel(level)
 
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(level)
 
-    if config.LOG_FORMAT == "json":
-        handler.setFormatter(_JsonFormatter())
-    else:
-        handler.setFormatter(logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
-        ))
+        if config.LOG_FORMAT == "json":
+            handler.setFormatter(_JsonFormatter())
+        else:
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+            ))
 
-    logger.addHandler(handler)
-    logger.propagate = False
+        logger.addHandler(handler)
+        logger.propagate = False
     return logger
 
 

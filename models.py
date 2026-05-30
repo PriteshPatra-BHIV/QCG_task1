@@ -13,8 +13,14 @@ class TransmissionRequest:
     mode: str
 
     def __post_init__(self):
-        if not self.message or not self.message.strip():
+        stripped = self.message.strip() if isinstance(self.message, str) else ""
+        if not stripped:
             raise ValueError("message must be a non-empty string.")
+        if len(stripped) > config.MAX_MESSAGE_LENGTH:
+            raise ValueError(
+                f"message length {len(stripped)} exceeds MAX_MESSAGE_LENGTH {config.MAX_MESSAGE_LENGTH}."
+            )
+        object.__setattr__(self, "message", stripped)
         if not (0.0 <= self.noise <= 1.0):
             raise ValueError(f"noise must be in [0.0, 1.0], got {self.noise}.")
         if self.mode not in config.SUPPORTED_MODES:

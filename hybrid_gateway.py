@@ -7,6 +7,8 @@ Flow:
 """
 
 import logging
+import threading
+import time
 
 import config
 from logger import get_logger, log_event
@@ -41,14 +43,14 @@ def classical_router(distribution, original_message: str) -> ClassicalContract:
     return contract
 
 
-def industrial_endpoint(contract: ClassicalContract, replay_registry: dict) -> str:
-    if contract.trace_id in replay_registry:
-        log_event(log, logging.WARNING, "replay_detected", ctx={
-            "trace_id": contract.trace_id
-        })
-        return "HALT:REPLAY_DETECTED"
-
-    replay_registry[contract.trace_id] = contract.decoded_message
+def industrial_endpoint(contract: ClassicalContract, replay_registry: dict, registry_lock: threading.Lock) -> str:
+    with registry_lock:
+        if contract.trace_id in replay_registry:
+            log_event(log, logging.WARNING, "replay_detected", ctx={
+                "trace_id": contract.trace_id
+            })
+            return "HALT:REPLAY_DETECTED"
+        replay_registry[contract.trace_id] = contract.decoded_message
 
     if contract.transmission_status == "OK":
         ack = f"ACK:OK:{contract.decoded_message}"
@@ -67,16 +69,43 @@ def industrial_endpoint(contract: ClassicalContract, replay_registry: dict) -> s
     return ack
 
 
+# -- Rate Limiter -------------------------------------------------------------
+
+class _RateLimiter:
+    """Token-bucket rate limiter, thread-safe."""
+
+    def __init__(self, per_minute: int):
+        self._capacity = per_minute
+        self._tokens = float(per_minute)
+        self._refill_rate = per_minute / 60.0
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            self._tokens = min(
+                self._capacity,
+                self._tokens + (now - self._last) * self._refill_rate,
+            )
+            self._last = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
 # -- Gateway ------------------------------------------------------------------
 
 class QuantumGateway:
     """
-    Stateful gateway instance. Each instance owns its replay registry,
-    making it safe to use in concurrent or multi-tenant contexts.
+    Thread-safe stateful gateway. Owns its replay registry and rate limiter.
     """
 
     def __init__(self):
         self._replay_registry: dict[str, str] = {}
+        self._registry_lock = threading.Lock()
+        self._rate_limiter = _RateLimiter(config.RATE_LIMIT_PER_MINUTE)
 
     def transmit(
         self,
@@ -89,11 +118,15 @@ class QuantumGateway:
         Run the full pipeline for one transmission.
         Always returns a deterministic ACK string - never raises.
         """
+        if not self._rate_limiter.allow():
+            log_event(log, logging.WARNING, "rate_limit_exceeded", ctx={"message": message})
+            return "HALT:RATE_LIMIT_EXCEEDED"
+
         try:
             request = TransmissionRequest(message=message, noise=noise, mode=mode)
             distribution = quantum_sender(request, seed=seed)
             contract = classical_router(distribution, message)
-            return industrial_endpoint(contract, self._replay_registry)
+            return industrial_endpoint(contract, self._replay_registry, self._registry_lock)
 
         except (ValueError, TypeError) as e:
             ack = f"HALT:INVALID_INPUT:{e}"
@@ -106,12 +139,24 @@ class QuantumGateway:
             return ack
 
         except Exception as e:
-            ack = f"HALT:UNEXPECTED:{e}"
-            log_event(log, logging.ERROR, "gateway_unexpected_error", ctx={"error": str(e)})
+            ack = f"HALT:UNEXPECTED:{type(e).__name__}:{e}"
+            log_event(log, logging.ERROR, "gateway_unexpected_error", ctx={
+                "error": str(e), "type": type(e).__name__
+            })
             return ack
 
+    def health_check(self) -> dict:
+        """Returns gateway health status. Safe to expose as a liveness probe."""
+        return {
+            "status": "ok",
+            "replay_registry_size": len(self._replay_registry),
+            "rate_limit_per_minute": config.RATE_LIMIT_PER_MINUTE,
+            "contract_version": config.CONTRACT_VERSION,
+        }
+
     def reset_replay_registry(self):
-        self._replay_registry.clear()
+        with self._registry_lock:
+            self._replay_registry.clear()
 
 
 # -- Failure Scenarios (Layer 4) ----------------------------------------------
@@ -147,6 +192,7 @@ def run_failure_tests(gateway: QuantumGateway):
 
             elif s.get("replay"):
                 gw = QuantumGateway()
+                gw._rate_limiter._tokens = float(gw._rate_limiter._capacity)  # ensure not rate-limited
                 ack1 = gw.transmit(s["message"], s["noise"], s["mode"], seed=42)
                 ack2 = gw.transmit(s["message"], s["noise"], s["mode"], seed=42)
                 passed = "REPLAY" in ack2

@@ -52,6 +52,30 @@ class TestTransmissionRequest:
         r = TransmissionRequest("MSG", 1.0, "entangled")
         assert r.noise == 1.0
 
+    def test_message_stripped(self):
+        r = TransmissionRequest("  NODE_READY  ", 0.0, "entangled")
+        assert r.message == "NODE_READY"
+
+    def test_message_too_long_raises(self):
+        with pytest.raises(ValueError, match="MAX_MESSAGE_LENGTH"):
+            TransmissionRequest("A" * 300, 0.0, "entangled")
+
+
+# -- Config Validation --------------------------------------------------------
+
+class TestConfigValidation:
+    def test_validate_passes_with_defaults(self):
+        import config
+        config.validate()  # should not raise
+
+    def test_validate_catches_inverted_thresholds(self):
+        import config
+        original_corruption = config.CORRUPTION_THRESHOLD
+        config.CORRUPTION_THRESHOLD = 0.80  # higher than CONFIDENCE_THRESHOLD
+        with pytest.raises(ValueError, match="less than"):
+            config.validate()
+        config.CORRUPTION_THRESHOLD = original_corruption  # restore
+
 
 # -- Layer 1: Quantum Producer ------------------------------------------------
 
@@ -190,7 +214,6 @@ class TestGatewayPipeline:
 
     def test_transmit_never_raises(self):
         gw = QuantumGateway()
-        # Should never raise regardless of input
         for noise in [0.0, 0.5, 0.99]:
             result = gw.transmit("NODE_READY", noise=noise, mode="entangled", seed=SEED)
             assert isinstance(result, str)
@@ -200,9 +223,27 @@ class TestGatewayPipeline:
         gw2 = QuantumGateway()
         ack1 = gw1.transmit("NODE_READY", noise=0.0, mode="entangled", seed=SEED)
         ack2 = gw2.transmit("NODE_READY", noise=0.0, mode="entangled", seed=SEED)
-        # Both should succeed independently (no shared replay state)
         assert "REPLAY" not in ack1
         assert "REPLAY" not in ack2
+
+    def test_health_check_returns_ok(self):
+        gw = QuantumGateway()
+        health = gw.health_check()
+        assert health["status"] == "ok"
+        assert "replay_registry_size" in health
+        assert "rate_limit_per_minute" in health
+        assert "contract_version" in health
+
+    def test_rate_limit_blocks_excess_requests(self):
+        gw = QuantumGateway()
+        gw._rate_limiter._tokens = 0.0  # exhaust tokens
+        ack = gw.transmit("NODE_READY", noise=0.0, mode="entangled", seed=SEED)
+        assert ack == "HALT:RATE_LIMIT_EXCEEDED"
+
+    def test_message_too_long_returns_halt(self):
+        gw = QuantumGateway()
+        ack = gw.transmit("A" * 300, noise=0.0, mode="entangled", seed=SEED)
+        assert ack.startswith("HALT:INVALID_INPUT")
 
 
 # -- Layer 4: Failure Proof ---------------------------------------------------
@@ -244,6 +285,29 @@ class TestFailureProof:
         )
         with pytest.raises(TranslationError, match="REJECTED"):
             translate(dist, "LINK_DOWN")
+
+    def test_concurrent_replay_guard(self):
+        """Two threads transmitting the same message should produce exactly one REPLAY."""
+        import threading
+        gw = QuantumGateway()
+        results = []
+        lock = threading.Lock()
+
+        def transmit():
+            ack = gw.transmit("NODE_READY", noise=0.0, mode="entangled", seed=SEED)
+            with lock:
+                results.append(ack)
+
+        threads = [threading.Thread(target=transmit) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        replay_count = sum(1 for r in results if "REPLAY" in r)
+        ok_count = sum(1 for r in results if r.startswith("ACK:OK"))
+        assert ok_count == 1
+        assert replay_count == 1
 
 
 # -- Layer 6: Determinism Proof -----------------------------------------------
