@@ -42,6 +42,16 @@ RATE_LIMIT_PER_MINUTE: int  = _int("QCG_RATE_LIMIT_PER_MINUTE", 60)
 LOG_LEVEL: str              = _str("QCG_LOG_LEVEL", "INFO")   # DEBUG | INFO | WARNING | ERROR
 LOG_FORMAT: str             = _str("QCG_LOG_FORMAT", "json")  # json | text
 
+# -- Adapter Layer ------------------------------------------------------------
+EXECUTION_CONTRACT_VERSION: str = _str("QCG_EXEC_CONTRACT_VERSION", "2.0.0")
+MINIMUM_CONTRACT_VERSION: str   = _str("QCG_MIN_CONTRACT_VERSION", "2.0.0")
+ALLOWED_PRODUCER_TYPES: set     = set(_str("QCG_ALLOWED_PRODUCERS", "CLASSICAL,QUANTUM,HYBRID").split(","))
+GOVERNANCE_STRICT_MODE: bool    = _str("QCG_GOVERNANCE_STRICT", "true").lower() == "true"
+
+# -- Distributed Simulation ---------------------------------------------------
+SIMULATION_NODE_COUNT: int      = _int("QCG_SIM_NODE_COUNT", 3)
+SIMULATION_PRODUCER_COUNT: int  = _int("QCG_SIM_PRODUCER_COUNT", 2)
+
 
 def validate():
     """Validate config at startup. Raises ValueError on bad values."""
@@ -60,6 +70,10 @@ def validate():
         raise ValueError(f"QCG_MAX_MESSAGE_LENGTH must be positive, got {MAX_MESSAGE_LENGTH}")
     if RATE_LIMIT_PER_MINUTE <= 0:
         raise ValueError(f"QCG_RATE_LIMIT_PER_MINUTE must be positive, got {RATE_LIMIT_PER_MINUTE}")
+    if SIMULATION_NODE_COUNT <= 0:
+        raise ValueError(f"QCG_SIM_NODE_COUNT must be positive, got {SIMULATION_NODE_COUNT}")
+    if SIMULATION_PRODUCER_COUNT <= 0:
+        raise ValueError(f"QCG_SIM_PRODUCER_COUNT must be positive, got {SIMULATION_PRODUCER_COUNT}")
 
 
 validate()
