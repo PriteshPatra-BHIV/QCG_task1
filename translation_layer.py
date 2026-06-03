@@ -4,6 +4,8 @@ Converts a QuantumDistribution into a deterministic ClassicalContract.
 No raw probabilities leak downstream.
 """
 
+from __future__ import annotations
+
 import uuid
 import hashlib
 import logging
@@ -65,7 +67,7 @@ def translate(distribution: QuantumDistribution, original_message: str) -> Class
         contract_version=config.CONTRACT_VERSION,
     )
 
-    log_event(log, logging.INFO, "translation_complete", ctx={
+    log_event(log, logging.WARNING if status == "REJECTED" else logging.INFO, "translation_complete", ctx={
         "trace_id": trace_id,
         "dominant_bits": dominant_bits,
         "confidence": round(confidence, 4),

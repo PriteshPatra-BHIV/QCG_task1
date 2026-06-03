@@ -12,10 +12,13 @@ contract_lineage   – Version, transformations, governance decisions.
 replay_proof       – Reconstruct the exact execution path, verify hashes.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import threading
+from collections import deque
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +26,8 @@ from typing import Any
 from logger import get_logger, log_event
 
 log = get_logger("qcg.observability")
+
+_MAX_TRACE_ENTRIES = 10_000  # cap to prevent unbounded memory growth
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +100,7 @@ class TraceStore:
     """
 
     def __init__(self):
-        self._entries: list[TraceEntry] = []
+        self._entries: deque[TraceEntry] = deque(maxlen=_MAX_TRACE_ENTRIES)
         self._lock = threading.Lock()
 
     # -- recording ----------------------------------------------------------
@@ -237,6 +242,10 @@ class TraceStore:
         """Return a snapshot of all entries."""
         with self._lock:
             return list(self._entries)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
 
     def clear(self) -> None:
         """Clear all entries."""

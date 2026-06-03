@@ -8,6 +8,8 @@ ever inspecting producer_type for branching logic.
 Supported producers: CLASSICAL | QUANTUM | HYBRID
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 from dataclasses import dataclass, asdict, field

@@ -14,7 +14,10 @@ The governance layer NEVER crashes.  Every failure is captured in a
 structured GovernanceViolation record with a safe HALT ACK.
 """
 
+from __future__ import annotations
+
 import logging
+from collections import deque
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 
@@ -29,6 +32,8 @@ from execution_contract import (
 from runtime_core import RuntimeCore, ExecutionResult
 
 log = get_logger("qcg.governance")
+
+_MAX_VIOLATIONS = 10_000  # cap to prevent unbounded memory growth
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +80,7 @@ class GovernanceLayer:
         self.strict = strict
         self.allowed_producers = allowed_producers or config.ALLOWED_PRODUCER_TYPES
         self.minimum_version = minimum_version or config.MINIMUM_CONTRACT_VERSION
-        self.violations: list[GovernanceViolation] = []
+        self._violations: deque[GovernanceViolation] = deque(maxlen=_MAX_VIOLATIONS)
 
     # -- public interface ---------------------------------------------------
 
@@ -106,7 +111,7 @@ class GovernanceLayer:
             violations.append(v)
             if self.strict:
                 self._log_violation(v)
-                self.violations.extend(violations)
+                self._violations.extend(violations)
                 return self._halt(contract, "HALT:UNAUTHORIZED_PRODUCER"), violations
 
         # Policy 2 — Contract version downgrade
@@ -126,7 +131,7 @@ class GovernanceLayer:
                 violations.append(v)
                 if self.strict:
                     self._log_violation(v)
-                    self.violations.extend(violations)
+                    self._violations.extend(violations)
                     return self._halt(contract, "HALT:CONTRACT_DOWNGRADE"), violations
         except ContractValidationError as exc:
             v = GovernanceViolation(
@@ -138,7 +143,7 @@ class GovernanceLayer:
             violations.append(v)
             if self.strict:
                 self._log_violation(v)
-                self.violations.extend(violations)
+                self._violations.extend(violations)
                 return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}"), violations
 
         # Policy 3 — Invalid contract (full schema validation)
@@ -158,7 +163,7 @@ class GovernanceLayer:
             violations.append(v)
             if self.strict:
                 self._log_violation(v)
-                self.violations.extend(violations)
+                self._violations.extend(violations)
                 return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}"), violations
 
         # Policy 4 — Low confidence (pre-check before core)
@@ -178,11 +183,11 @@ class GovernanceLayer:
 
         # Log warnings for non-critical violations in permissive mode
         for v in violations:
-            if v not in self.violations:
+            if v not in self._violations:
                 self._log_violation(v)
 
         # Store violations for auditing
-        self.violations.extend(violations)
+        self._violations.extend(violations)
 
         # Delegate to blind core
         # (core also has its own replay guard and confidence checks)
@@ -198,17 +203,17 @@ class GovernanceLayer:
                 details="Duplicate trace_id detected in replay registry.",
             )
             violations.append(v)
-            self.violations.append(v)
+            self._violations.append(v)
 
         return result, violations
 
     def get_violations(self) -> list[dict]:
         """Return all recorded violations as dicts."""
-        return [v.to_dict() for v in self.violations]
+        return [v.to_dict() for v in self._violations]
 
     def clear_violations(self):
         """Clear the violation log."""
-        self.violations.clear()
+        self._violations.clear()
 
     # -- internal helpers ---------------------------------------------------
 

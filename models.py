@@ -45,7 +45,7 @@ class QuantumDistribution:
             raise ValueError("shots must be a positive integer.")
 
 
-@dataclass
+@dataclass(frozen=True)
 class ClassicalContract:
     trace_id: str
     confidence: float

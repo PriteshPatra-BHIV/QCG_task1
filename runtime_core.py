@@ -9,6 +9,8 @@ This is the key proof surface: quantum and classical contracts both traverse
 the exact same execute() method without any producer-aware conditional.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging

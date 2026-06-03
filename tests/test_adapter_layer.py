@@ -483,7 +483,6 @@ class TestGovernanceLayer:
         gov.enforce(bad1)
         gov.enforce(bad2)
         assert len(gov.get_violations()) >= 2
-
     def test_permissive_mode_allows_execution(self):
         gov = GovernanceLayer(strict=False, allowed_producers={"QUANTUM", "CLASSICAL", "HYBRID", "ALIEN"})
         c = ComputationExecutionContract(

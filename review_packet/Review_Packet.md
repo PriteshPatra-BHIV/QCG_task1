@@ -1,6 +1,12 @@
 # Review Packet — Hybrid Quantum Communication Gateway (QCG)
 
-> A complete, non-technical overview of the project — what it is, how it works, what each file does, how decisions are made, whether it's production ready, and how to run it.
+> A complete, non-technical overview of the project — what it is, how it works,
+> what each file does, how decisions are made, whether it's production ready,
+> and how to run it.
+
+**Last Updated:** 2025-06-03
+**Status:** Production-ready (single-instance)
+**Test Suite:** 122/122 passing
 
 ---
 
@@ -18,7 +24,7 @@
 ## 1. What Is This Project?
 
 ### The One-Line Answer
-A smart communication system that uses quantum physics to send messages — and then converts the result into a clear, reliable decision that any normal computer can understand.
+A communication gateway that uses quantum physics to send messages — and converts the probabilistic quantum result into a deterministic, auditable decision that any classical system can consume safely.
 
 ### The Problem It Solves
 
@@ -26,38 +32,31 @@ Normal computers speak in certainties — yes or no, 0 or 1.
 
 Quantum computers speak in probabilities — "maybe 0, maybe 1, here's the chance of each."
 
-These two worlds don't naturally talk to each other. If you plug a quantum output directly into a normal system, the normal system gets confused — it doesn't know what to do with "70% chance it's a 1."
+These two worlds don't naturally talk to each other. If you plug a quantum output directly into a classical system, the classical system has no safe way to interpret "70% chance it's a 1" — it needs a firm answer.
 
-**This project builds the bridge between them.**
+**This project builds the bridge.**
 
-### What It Actually Does — In Plain English
+### What It Does — In Plain English
 
-1. You send a message, like `"NODE_READY"`.
-2. The system encodes that message using quantum physics and simulates sending it through a noisy channel (like a real-world wire with interference).
-3. It gets back a fuzzy, probabilistic result — not a clean answer.
-4. It then translates that fuzzy result into a clean, confident decision: **"The message arrived. We're 93% sure. Status: OK."**
-5. A traditional computer receives that clean decision and responds with a simple acknowledgement: **"Got it."**
+1. You send a message like `"NODE_READY"`.
+2. The system encodes it using quantum physics (superdense coding) and simulates transmission through a noisy channel.
+3. It receives a probabilistic result — a spread of possible outcomes with frequencies.
+4. It classifies the uncertainty explicitly: is this HIGH_CONFIDENCE? DEGRADED? UNTRANSLATABLE?
+5. It translates the result into a clean, structured decision: *"The message arrived. We're 93% sure. Status: OK."*
+6. A classical system receives that decision and responds: `ACK:OK:NODE_READY`.
+7. The quantum output never directly triggers any action. It produces a recommendation. The caller decides.
 
-### A Real-World Analogy
+### The Key Rule
 
-Think of it like a **radio signal in bad weather.**
+> Quantum output → classified uncertainty → deterministic contract → operational recommendation.
+>
+> Never: quantum output → autonomous command.
 
-- The radio tower (quantum side) sends a song.
-- There's static and interference (noise).
-- A smart receiver (translation layer) listens, filters out the noise, and decides: "That was definitely *Bohemian Rhapsody*, confidence 91%."
-- Your speaker (classical computer) just plays the song — it never had to deal with the static.
-
-This project is that smart receiver.
-
-### Who Would Use This?
-
-- Engineers building systems that need to connect quantum hardware to existing infrastructure.
-- Companies exploring quantum communication for secure data transmission.
-- Researchers who need a reliable, testable simulation of quantum-to-classical handoff.
+This rule is enforced in code and proven at runtime. It is not just a design principle.
 
 ### Key Guarantee
 
-No matter how many times you run it with the same inputs, you get the **exact same output**. This is called determinism — and it's essential for any system you want to trust in production.
+Same inputs + same seed = identical output, every time. This is verified by running the pipeline 5 times and confirming zero mismatches.
 
 ---
 
@@ -65,331 +64,228 @@ No matter how many times you run it with the same inputs, you get the **exact sa
 
 ### The Journey of "NODE_READY"
 
-**Step 1 — You Send a Message**
+**Step 1 — You provide three things:**
+- The message: `NODE_READY`
+- Channel noise level: `0.12` (12% interference)
+- Transmission mode: `entangled`
 
-You provide three things:
-- The **message** you want to send (e.g. `NODE_READY`)
-- How much **noise** is on the channel (e.g. `0.12` = 12% interference)
-- The **mode** of transmission (e.g. `entangled`)
+**Step 2 — Quantum Encoding**
 
-**Step 2 — Quantum Encoding (Layer 1)**
+The message is converted to a 2-bit code via superdense coding and simulated through a quantum channel with the specified noise. The output is a probability distribution across 1024 shots:
 
-The message gets converted into a quantum signal using a technique called **superdense coding** — a real quantum physics method that encodes 2 bits of information using just 1 qubit.
-
-Think of it like compressing a letter into a secret code before sending it.
-
-The signal is then sent through a simulated quantum channel — complete with realistic noise and interference.
-
-Output — a probability distribution. Example:
 ```
-{ "00": 12, "01": 8, "10": 950, "11": 54 }
+{ "11": 697, "10": 162, "01": 86, "00": 79 }
 ```
-This means: out of 1024 attempts, the signal landed on "10" most often.
 
-**Step 3 — Translation (Layer 2)**
+"11" won 697 out of 1024 times — that is the dominant outcome.
 
-This is the most important step.
+**Step 3 — Uncertainty Classification**
 
-The system looks at the probability distribution and asks:
-- What was the most common result? → `"10"`
-- How confident are we? → `92.8%`
-- Does that match the original message? → Yes ✅
-- What's the final verdict?
+Before any contract is formed, the distribution is classified:
 
-It produces a **Classical Contract** — a clean, structured decision:
+```
+confidence     = 697 / 1024 = 0.6807
+uncertainty    = LOW_CONFIDENCE
+posture        = PROCEED_WITH_CAUTION
+```
+
+This envelope is the explicit boundary. Probabilistic quantum behaviour stops here.
+
+**Step 4 — Translation**
+
+The dominant bitstring is checked against what was expected for "NODE_READY". If it matches and confidence is above the floor, a Classical Contract is formed:
+
 ```json
 {
-  "trace_id":            "a3f9...",
-  "confidence":          0.9287,
+  "trace_id":            "c987207f-a809-54e9-b64b-e7940c28f291",
+  "confidence":          0.6807,
   "decoded_message":     "NODE_READY",
-  "transmission_status": "OK",
-  "uncertainty_score":   0.0713,
+  "transmission_status": "DEGRADED",
+  "uncertainty_score":   0.3193,
   "contract_version":    "1.0.0"
 }
 ```
-No raw probabilities. No quantum jargon. Just a clear answer.
 
-**Step 4 — Classical Receiver (Layer 3)**
+No raw probabilities. No quantum counts. Just a structured decision.
 
-A traditional computer receives the contract and responds:
-```
-ACK:OK:NODE_READY
-```
-Done. The message was received, verified, and acknowledged — just like any normal system would expect.
+**Step 5 — Operational Posture**
 
-**Step 5 — Safety Checks (Layer 4)**
-
-Before accepting any message, the system checks:
-
-| Situation | What Happens |
-|-----------|-------------|
-| Too much noise | `HALT:TRANSLATION_FAILURE` |
-| Low confidence | `HALT:TRANSLATION_FAILURE` |
-| Message was corrupted | `HALT:TRANSLATION_FAILURE` |
-| Same message sent twice | `HALT:REPLAY_DETECTED` |
-| Too many requests | `HALT:RATE_LIMIT_EXCEEDED` |
-
-The system **never crashes** — it always returns a clear, safe response.
-
-### The Full Picture
+The contract is evaluated against context (noise level, replay registry, rate limits):
 
 ```
-You
- │
- │  "NODE_READY", noise=0.12, mode=entangled
- ▼
-[Quantum Sender]     → encodes message into quantum signal
- │
- ▼
-[Quantum Channel]    → adds realistic noise/interference
- │
- ▼
-[Translation Layer]  → converts fuzzy result into clean contract
- │
- ▼
-[Classical Receiver] → reads contract, sends ACK
- │
- ▼
-ACK:OK:NODE_READY
+outcome      : DEGRADED
+emit_action  : True  (participation allowed, warning lineage attached)
+justification: Confidence 0.6807 in [0.40, 0.70). Participation allowed with warning lineage.
 ```
+
+**Step 6 — ACK**
+
+```
+ACK:DEGRADED:NODE_READY:confidence=0.6807
+```
+
+The pipeline is complete. The quantum layer stayed probabilistic the whole time. The classical layer received a deterministic, auditable result.
 
 ---
 
 ## 3. What Each File Does
 
-### Core Files
+### Doctrine Layer (new in this submission)
 
-**`config.py` — The Settings Panel**
-All the dials and switches for the system in one place — how many times to run the quantum simulation, how confident we need to be before saying "OK", how noisy a channel can be before we reject it, maximum message length, rate limits, and log format. You can change any of these without touching the code — just edit the `.env` file.
+| File | Phase | Role |
+|------|-------|------|
+| `quantum_uncertainty.py` | 1 | Classifies quantum output into 5 uncertainty classes. Hard boundary. |
+| `contract_semantics.py` | 2 | Proves determinism (same seed → same contract) and convergence (different distributions → same contract). |
+| `degraded_runtime.py` | 3 | Maps contracts to operational postures: OK, DEGRADED, HOLD, REJECT, HALT. |
+| `lineage.py` | 4 | Builds and reconstructs full contract provenance. No hidden state. |
+| `authority_boundary_test.py` | 5 | Proves the system never becomes execution authority, even at 0.99 confidence. |
+| `run_semantics_runtime.py` | 6 | Runs all 5 runtime cases (A–E). No silent states. Exit 0 = all pass. |
 
-**`models.py` — The Data Shapes**
-Defines exactly what a valid message looks like, what a quantum result looks like, and what a final contract looks like. Think of it as the forms the system uses — every piece of data must fill out the right form before it can move to the next step.
+### Core Gateway Layer
 
-**`logger.py` — The Black Box Recorder**
-Every action the system takes gets written to a log — like a flight recorder. In production mode it writes clean JSON lines (easy for monitoring tools to read). In development mode it writes human-readable text.
+| File | Layer | Role |
+|------|-------|------|
+| `quantum_producer.py` | 1 | Qiskit superdense coding simulation. Returns QuantumDistribution. |
+| `translation_layer.py` | 2 | Converts quantum output to ClassicalContract. Raises TranslationError on rejection. |
+| `hybrid_gateway.py` | 3–5 | Orchestrates pipeline, rate limiting, replay guard, health check. |
+| `determinism_proof.py` | 6 | 5-run seed-locked determinism verification. |
 
-**`quantum_producer.py` — The Quantum Sender (Layer 1)**
-Takes your message and simulates sending it through a quantum channel. Uses a real quantum computing library (Qiskit) to build and run the simulation. Adds realistic noise based on the noise level you provide. Returns a probability distribution — the raw quantum output.
+### Adapter / Runtime Layer
 
-**`translation_layer.py` — The Translator (Layer 2)**
-The most important file. Takes the fuzzy quantum output and converts it into a clean, structured contract. Makes the confidence/rejection decision. Ensures no raw probabilities ever leak to the outside world.
+| File | Role |
+|------|------|
+| `execution_contract.py` | Generic ComputationExecutionContract (v2.0.0) wrapping any producer output. |
+| `adapters.py` | QuantumAdapter, ClassicalAdapter, HybridAdapter — maps producer outputs to execution contracts. |
+| `runtime_core.py` | Producer-blind execution core. Never inspects producer_type for branching. |
+| `governance.py` | Policy enforcement wrapping RuntimeCore. 5 failure policies. Never crashes. |
+| `observability.py` | TraceStore — records and reconstructs full execution lineage. Bounded to 10,000 entries. |
+| `distributed_simulation.py` | Multi-node simulation with hash-chain ledger agreement proof. |
 
-**`hybrid_gateway.py` — The Orchestrator (Layers 3, 4, 5)**
-The main controller. Runs the full pipeline from message → ACK, enforces rate limiting, guards against replay attacks, never crashes, and exposes a health check so monitoring tools can verify it's alive.
+### Infrastructure
 
-**`determinism_proof.py` — The Consistency Checker (Layer 6)**
-Runs the same message with the same settings 5 times and proves every output is identical. This is the guarantee that the system is reliable and predictable — not random.
-
-**`tests/test_all.py` — The Test Suite**
-35+ automated tests that verify every part of the system works correctly — including all failure scenarios, thread safety, and the determinism proof.
-
-### File Summary Table
-
-| File | Layer | One Job |
-|------|-------|---------|
-| `quantum_producer.py` | 1 | Send message through quantum channel |
-| `translation_layer.py` | 2 | Convert quantum output to clean contract |
-| `hybrid_gateway.py` | 3, 4, 5 | Orchestrate, protect, observe |
-| `determinism_proof.py` | 6 | Prove consistency |
-| `config.py` | — | All settings in one place |
-| `models.py` | — | Define data shapes |
-| `logger.py` | — | Record everything |
-| `tests/test_all.py` | — | Verify everything works |
-
-### Configuration Files
-
-| File | Purpose |
-|------|---------|
-| `requirements.txt` | Production dependencies |
-| `requirements-dev.txt` | Development dependencies (adds testing tools) |
-| `.env.example` | Template showing all available settings |
+| File | Role |
+|------|------|
+| `config.py` | All constants, env-overridable. Validated at startup. |
+| `models.py` | Frozen dataclasses: TransmissionRequest, QuantumDistribution, ClassicalContract. |
+| `logger.py` | Structured JSON logger (production) or text (development). Thread-safe. |
+| `requirements.txt` | Production dependencies (qiskit≥2.0.0, qiskit-aer≥0.15.0). |
+| `.env.example` | All config keys with defaults. Copy to .env to customise. |
 
 ---
 
 ## 4. How the System Makes Decisions
 
-### The Three Outcomes
+### Uncertainty Classification (before any contract is formed)
 
-Every transmission ends in one of three states:
+| Class | Condition | Recommended Posture |
+|-------|-----------|---------------------|
+| HIGH_CONFIDENCE | confidence ≥ 0.70 | PROCEED |
+| LOW_CONFIDENCE | confidence in [0.40, 0.70) | PROCEED_WITH_CAUTION |
+| DEGRADED | noise > 0.50 AND confidence < 0.70 | HOLD |
+| UNTRANSLATABLE | confidence < 0.30 (cannot decode) | HOLD |
+| REJECTED | confidence < 0.40 | REJECT |
 
-**✅ OK**
-The message arrived clearly and we're confident it's correct. Confidence is 70% or higher AND the decoded message matches what was sent.
-Response: `ACK:OK:NODE_READY`
+### Operational Outcomes (after translation)
 
-**⚠️ DEGRADED**
-The message probably arrived correctly, but the signal was weak. Confidence is between 40% and 70% AND the decoded message still matches. The system still delivers the message but flags it so the receiver knows to treat it with caution.
-Response: `ACK:DEGRADED:NODE_READY:confidence=0.58`
+| Outcome | Condition | Action permitted? |
+|---------|-----------|-------------------|
+| OK | confidence ≥ 0.70, message matches | Yes |
+| DEGRADED | confidence in [0.40, 0.70), message matches | Yes, with warning lineage |
+| HOLD | noise > 0.50 AND status ≠ OK | No |
+| REJECT | confidence < 0.40 OR bit mismatch | No |
+| HALT | replay detected OR rate limit exceeded | No |
 
-**❌ REJECTED**
-We can't trust this transmission. Either the signal was too noisy, or the message doesn't match what was originally sent. The message is thrown away. Nothing unsafe passes through.
-Response: `HALT:TRANSLATION_FAILURE`
-
-### The Other HALT Responses
+### All HALT Responses
 
 | Response | Cause |
 |----------|-------|
-| `HALT:REPLAY_DETECTED` | The exact same message was already received. Possible replay attack. |
-| `HALT:RATE_LIMIT_EXCEEDED` | Too many requests in a short time. System is protecting itself from overload. |
-| `HALT:INVALID_INPUT` | The message was empty, too long, or values were invalid. |
-| `HALT:UNEXPECTED` | Something unexpected went wrong internally. Always logged with full details. |
+| `HALT:TRANSLATION_FAILURE` | Signal too noisy to translate |
+| `HALT:REPLAY_DETECTED` | Same trace_id received twice |
+| `HALT:RATE_LIMIT_EXCEEDED` | Too many requests per minute |
+| `HALT:INVALID_INPUT` | Empty, oversized, or invalid message |
+| `HALT:CONTRACT_DOWNGRADE` | Contract version below minimum |
+| `HALT:UNAUTHORIZED_PRODUCER` | Producer type not in allowed set |
+| `HALT:UNEXPECTED` | Unhandled internal exception (always logged) |
 
-### The Confidence Score — Explained Simply
-
-Imagine you flip a coin 1024 times. If it lands heads 950 times, you're very confident the coin is biased toward heads.
-
-The system does the same thing — it runs the quantum simulation 1024 times and counts the results. If one outcome dominates, confidence is high. If results are scattered evenly, confidence is low (too much noise).
-
-```
-High noise  →  scattered results  →  low confidence  →  REJECTED
-Low noise   →  dominant result    →  high confidence  →  OK
-```
-
-### The Trace ID — Explained Simply
-
-Every contract gets a unique ID called a `trace_id`. It's generated from the message content + seed + result — so the same transmission always produces the same ID. This is how the system detects replays: if it sees the same `trace_id` twice, it knows someone is re-sending an old message and blocks it.
+The system never crashes. Every code path returns one of the above.
 
 ---
 
 ## 5. Is This System Production Ready?
 
-**Short Answer: Yes — after the upgrades applied in this version.**
+**Short answer: Yes — for single-instance deployment.**
 
-A system is production ready when it can be trusted to run in the real world — under load, under attack, and under unexpected conditions — without breaking, leaking data, or behaving unpredictably.
+### Production Fixes Applied
 
-### What Was Fixed
-
-| # | Fix | What It Means |
-|---|-----|---------------|
-| 1 | Security vulnerabilities patched | Three libraries had known security holes. All updated to safe versions. |
-| 2 | Thread safety added | Two simultaneous requests can no longer both slip past the replay guard. A lock ensures only one passes at a time — like a turnstile. |
-| 3 | Rate limiting added | The system now limits requests per minute. Prevents overload and abuse. |
-| 4 | Input safety added | Messages are checked for length and cleaned automatically. Bad inputs are rejected immediately. |
-| 5 | Config validation added | Invalid settings (e.g. threshold of 150%) cause the system to refuse to start with a clear error. |
-| 6 | Health check added | Monitoring tools can ask "are you alive?" and get a clear answer. Required for cloud deployment. |
-| 7 | Accurate logging fixed | Timestamps now reflect exactly when an event happened, not when it was written to disk. |
-| 8 | Dependency separation fixed | Testing tools are no longer bundled with the production system. |
+| Fix | Why It Matters |
+|-----|---------------|
+| `ClassicalContract` made frozen | Contracts must be immutable. A mutable contract can be silently altered after formation, breaking the audit trail. |
+| REJECTED translations log at WARNING | Monitoring systems filtering INFO would silently miss every rejection. Fixed to WARNING. |
+| `TraceStore` bounded to 10,000 entries | Unbounded list in a long-running process → eventual OOM. Now uses `deque(maxlen=10_000)`. |
+| `GovernanceLayer._violations` bounded the same | Same reason. |
+| `from __future__ import annotations` added | Union type syntax `X \| Y` is not valid at runtime in Python < 3.10 without this. Added to 5 files. |
+| `requirements.txt` corrected | Was pinned to `qiskit-aer==0.14.2` (incompatible with qiskit 2.x). Corrected to `>=0.15.0`. |
+| `.env.example` completed | Was missing all adapter-layer config keys. Now includes every key read by `config.py`. |
 
 ### Known Limitations
 
-| Limitation | Impact | Notes |
-|------------|--------|-------|
-| Replay registry is in-memory | Replay protection breaks across multiple instances | Fine for single-instance; needs Redis/DB for multi-instance |
-| Quantum simulation is synchronous | Under very high load, requests queue up | Fine for current scale; async is a future upgrade |
-| No distributed tracing | Can't trace a request across multiple services | Not needed at current architecture size |
-
-### Before vs After
-
-| Area | Before | After |
-|------|--------|-------|
-| Security vulnerabilities | 3 known CVEs | All patched |
-| Thread safety | Race conditions present | Fully locked |
-| Rate limiting | None | Token-bucket limiter |
-| Input validation | Basic | Length + sanitization |
-| Config safety | No validation | Validated at startup |
-| Health check | None | Implemented |
-| Log accuracy | Slightly off under load | Accurate timestamps |
-| Dependency hygiene | pytest in production | Separated |
-
-The system is ready for single-instance production deployment.
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| Replay registry in-memory | Replay protection breaks across restarts and multi-instance deployments | Use Redis or a DB for production multi-instance |
+| TraceStore in-memory | Traces lost on restart; capped at 10,000 entries | Export to OpenTelemetry for distributed deployments |
+| Quantum simulation synchronous | High request volumes will queue | Acceptable for current prototype scale |
+| No cryptographic lineage signatures | Lineage cannot be third-party verified | Add HMAC if non-repudiation is required |
 
 ---
 
 ## 6. Quick Start — Run It in 5 Minutes
 
-### What You Need
-- Python 3.10 or higher
-- A terminal (Command Prompt, PowerShell, or any shell)
+### Requirements
+- Python 3.10+
+- pip
 
-### Step 1 — Install Dependencies
-
+### Install
 ```bash
-# Production only
-pip install -r requirements.txt
-
-# Production + tests
-pip install -r requirements-dev.txt
+pip install -r requirements.txt       # production
+pip install -r requirements-dev.txt   # + pytest
 ```
 
-### Step 2 — (Optional) Configure Settings
-
+### Run the doctrine proof
 ```bash
-cp .env.example .env
+python run_semantics_runtime.py
+# Expected: ALL CASES PASSED, exit 0
 ```
 
-Open `.env` and adjust any values. The defaults work fine out of the box.
-
-### Step 3 — Run the Gateway Demo
-
+### Run the anti-authority proof
 ```bash
-python hybrid_gateway.py
+python authority_boundary_test.py
+# Expected: VERDICT: PASS, exit 0
 ```
 
-Runs a full transmission and all 5 failure scenarios. Expected last line:
-```
-{"event": "gateway_demo_result", "ctx": {"ack": "ACK:OK:NODE_READY"}}
-```
-
-### Step 4 — Run the Determinism Proof
-
+### Run the determinism proof
 ```bash
 python determinism_proof.py
+# Expected: passed=true, mismatches=[], exit 0
 ```
 
-- Exits `0` = PASSED ✅
-- Exits `1` = FAILED ❌
+### Run the full gateway demo
+```bash
+python hybrid_gateway.py
+# Expected last event: "ack": "ACK:OK:NODE_READY"
+```
 
-### Step 5 — Run All Tests
-
+### Run all tests
 ```bash
 pytest tests/ -v
+# Expected: 122 passed
 ```
 
-35+ tests. All should pass.
-
-### What You'll See in the Logs
-
-Each log line is a JSON object:
-
-| Field | Meaning |
-|-------|---------|
-| `ts` | Timestamp (UTC) |
-| `level` | INFO / WARNING / ERROR |
-| `event` | What just happened |
-| `ctx` | Details about that event |
-
-Example:
-```json
-{
-  "ts": "2025-01-15T10:23:41.123456+00:00",
-  "level": "INFO",
-  "logger": "qcg.gateway",
-  "event": "industrial_endpoint_ack",
-  "ctx": {
-    "trace_id": "a3f9c2d1-...",
-    "confidence": 0.9287,
-    "status": "OK",
-    "ack": "ACK:OK:NODE_READY"
-  }
-}
-```
-
-### Check System Health
-
-```python
-from hybrid_gateway import QuantumGateway
-gw = QuantumGateway()
-print(gw.health_check())
-```
-
-```json
-{
-  "status": "ok",
-  "replay_registry_size": 0,
-  "rate_limit_per_minute": 60,
-  "contract_version": "1.0.0"
-}
+### (Optional) Configure
+```bash
+copy .env.example .env
+# Edit .env to tune thresholds, log format, rate limits, etc.
 ```
 
 ---
 
-*This document covers the complete Hybrid Quantum Communication Gateway project — from concept to production.*
+*This document is the non-technical companion to `REVIEW_PACKET.md` (technical) and `TESTING_PACKET.md` (evidence).*

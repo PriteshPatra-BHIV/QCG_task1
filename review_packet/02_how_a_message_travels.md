@@ -4,75 +4,79 @@
 
 ---
 
-### Step 1 — You Send a Message
-You provide three things:
-- The **message** you want to send (e.g. `NODE_READY`)
-- How much **noise** is on the channel (e.g. `0.12` = 12% interference)
-- The **mode** of transmission (e.g. `entangled`)
+### Step 1 — You Provide Three Things
+- The **message**: `NODE_READY`
+- Channel **noise level**: `0.12` (12% interference)
+- **Transmission mode**: `entangled`
 
 ---
 
-### Step 2 — Quantum Encoding (Layer 1)
-The message gets converted into a quantum signal using a technique called **superdense coding** — a real quantum physics method that encodes 2 bits of information using just 1 qubit.
+### Step 2 — Quantum Encoding
+The message is converted to a 2-bit code using **superdense coding** — a real quantum physics technique that encodes 2 bits of information using 1 qubit.
 
-Think of it like compressing a letter into a secret code before sending it.
+The circuit runs 1,024 times through a simulated noisy channel.
 
-The signal is then sent through a simulated quantum channel — complete with realistic noise and interference.
-
-**Output:** A probability distribution. Example:
+**Output — a probability distribution (actual live values):**
 ```
-{ "00": 12, "01": 8, "10": 950, "11": 54 }
+{ "11": 697, "10": 162, "01": 86, "00": 79 }
 ```
-This means: out of 1024 attempts, the signal landed on "10" most often.
+"11" won 697 out of 1,024 shots. That is the dominant outcome.
 
 ---
 
-### Step 3 — Translation (Layer 2)
-This is the most important step.
+### Step 3 — Uncertainty Classification (NEW — doctrine layer)
 
-The system looks at the probability distribution and asks:
-- What was the most common result? → `"10"`
-- How confident are we? → `92.8%`
-- Does that match the original message? → Yes ✅
-- What's the final verdict?
+Before any contract is formed, the distribution is explicitly classified:
 
-It produces a **Classical Contract** — a clean, structured decision:
 ```
+dominant outcome  : "11"
+confidence        : 697 / 1024 = 0.6807
+noise_factor      : 0.12
+uncertainty class : LOW_CONFIDENCE
+posture           : PROCEED_WITH_CAUTION
+```
+
+This is the hard boundary. Quantum probabilistic behaviour stops here. The downstream layers never see raw counts or probabilities — only the classified envelope.
+
+---
+
+### Step 4 — Translation
+The dominant bitstring is verified against what was expected for "NODE_READY". If it matches and confidence is above the floor, a Classical Contract is formed:
+
+```json
 {
-  "trace_id":            "a3f9...",
-  "confidence":          0.9287,
+  "trace_id":            "c987207f-a809-54e9-b64b-e7940c28f291",
+  "confidence":          0.6807,
   "decoded_message":     "NODE_READY",
-  "transmission_status": "OK",
-  "uncertainty_score":   0.0713,
+  "transmission_status": "DEGRADED",
+  "uncertainty_score":   0.3193,
   "contract_version":    "1.0.0"
 }
 ```
 
-No raw probabilities. No quantum jargon. Just a clear answer.
+No raw probabilities. No quantum counts. A deterministic, structured decision.
 
 ---
 
-### Step 4 — Classical Receiver (Layer 3)
-A traditional computer receives the contract and responds:
+### Step 5 — Operational Posture
+The contract is evaluated against current context (noise level, replay registry, rate limits):
+
 ```
-ACK:OK:NODE_READY
+outcome      : DEGRADED
+emit_action  : True  (participation allowed, warning lineage attached)
+justification: Confidence 0.6807 in [0.40, 0.70). Participation allowed with warning lineage.
 ```
-Done. The message was received, verified, and acknowledged — just like any normal system would expect.
+
+This posture is **advisory**. It tells the caller what is safe. The caller decides whether to act. The system never acts autonomously.
 
 ---
 
-### Step 5 — Safety Checks (Layer 4)
-Before accepting any message, the system checks:
+### Step 6 — ACK
+```
+ACK:DEGRADED:NODE_READY:confidence=0.6807
+```
 
-| Situation | What Happens |
-|-----------|-------------|
-| Too much noise | `HALT:TRANSLATION_FAILURE` |
-| Low confidence | `HALT:TRANSLATION_FAILURE` |
-| Message was corrupted | `HALT:TRANSLATION_FAILURE` |
-| Same message sent twice | `HALT:REPLAY_DETECTED` |
-| Too many requests | `HALT:RATE_LIMIT_EXCEEDED` |
-
-The system **never crashes** — it always returns a clear, safe response.
+The pipeline is complete. The quantum layer stayed probabilistic. The classical layer received a deterministic, auditable result.
 
 ---
 
@@ -83,17 +87,31 @@ You
  │
  │  "NODE_READY", noise=0.12, mode=entangled
  ▼
-[Quantum Sender]     → encodes message into quantum signal
- │
+[Quantum Producer]       → encodes message, runs 1024 shots
+ │  { "11": 697, "10": 162, "01": 86, "00": 79 }
  ▼
-[Quantum Channel]    → adds realistic noise/interference
- │
+[Uncertainty Classifier] → LOW_CONFIDENCE (confidence=0.6807)
+ │  UncertaintyEnvelope  [BOUNDARY — quantum stops here]
  ▼
-[Translation Layer]  → converts fuzzy result into clean contract
- │
+[Translation Layer]      → ClassicalContract (status=DEGRADED)
+ │  no raw probabilities downstream
  ▼
-[Classical Receiver] → reads contract, sends ACK
- │
+[Degraded Runtime]       → OperationalPosture (DEGRADED, emit=True)
+ │  advisory recommendation, not a command
  ▼
-ACK:OK:NODE_READY
+ACK:DEGRADED:NODE_READY:confidence=0.6807
 ```
+
+---
+
+### What Happens When Things Go Wrong
+
+| Situation | What Happens |
+|-----------|-------------|
+| Too much noise (confidence < 0.40) | `HALT:TRANSLATION_FAILURE` |
+| Near-uniform distribution (confidence < 0.30) | `HALT:TRANSLATION_FAILURE` — classified as UNTRANSLATABLE first |
+| Message bits don't match original | `HALT:TRANSLATION_FAILURE` — REJECT |
+| Same trace_id sent twice | `HALT:REPLAY_DETECTED` |
+| Too many requests per minute | `HALT:RATE_LIMIT_EXCEEDED` |
+
+The system **never crashes**. Every path returns a structured, observable string.

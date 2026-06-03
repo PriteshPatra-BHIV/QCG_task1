@@ -6,6 +6,8 @@ All caller-supplied context is passed as a single 'ctx' dict to avoid
 collisions with Python's reserved LogRecord attribute names.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import sys
