@@ -1,17 +1,31 @@
 """
 governance.py — Phase 4: Failure + Governance Boundaries
 
-Wraps RuntimeCore with policy enforcement.  All five failure scenarios are
-handled here:
+Wraps RuntimeCore with PRE-EXECUTION policy enforcement.  Governance
+gates contract execution without modifying contract content or bypassing
+runtime logic.
 
-1. Low confidence quantum output   → HALT:LOW_CONFIDENCE
-2. Invalid producer contract       → HALT:INVALID_CONTRACT
-3. Replay mismatch                 → HALT:REPLAY_DETECTED
-4. Contract downgrade attempt      → HALT:CONTRACT_DOWNGRADE
-5. Unauthorized producer type      → HALT:UNAUTHORIZED_PRODUCER
+RESPONSIBILITY BOUNDARY
+-----------------------
+GovernanceLayer OWNS (pre-execution policy):
+    1. Producer type authorization     → HALT:UNAUTHORIZED_PRODUCER
+    2. Contract version enforcement    → HALT:CONTRACT_DOWNGRADE
+    3. Contract schema validation      → HALT:INVALID_CONTRACT
+    4. Violation recording + audit
+    5. Strict / permissive mode
 
-The governance layer NEVER crashes.  Every failure is captured in a
-structured GovernanceViolation record with a safe HALT ACK.
+GovernanceLayer does NOT OWN:
+    - Confidence threshold enforcement → RuntimeCore
+    - Replay detection (primary)       → RuntimeCore
+    - ACK generation                   → RuntimeCore
+    - Runtime hash computation         → RuntimeCore
+    - Payload content inspection       → Never (opaque)
+
+GovernanceLayer DELEGATES to RuntimeCore for execution, then OBSERVES
+the result ACK to record governance-relevant outcomes (e.g. REPLAY_DETECTED,
+LOW_CONFIDENCE) as violations after the fact.
+
+See governance_authority.py for the full authority declaration.
 """
 
 from __future__ import annotations
@@ -43,11 +57,11 @@ _MAX_VIOLATIONS = 10_000  # cap to prevent unbounded memory growth
 @dataclass(frozen=True)
 class GovernanceViolation:
     """Structured record of a governance policy violation."""
-    violation_type: str        # e.g. "UNAUTHORIZED_PRODUCER"
-    severity:       str        # CRITICAL | HIGH | MEDIUM | LOW
-    trace_id:       str
-    details:        str
-    timestamp:      str = field(
+    violation_type: str        # e.g. "UNAUTHORIZED_PRODUCER"          DETERMINISTIC
+    severity:       str        # CRITICAL | HIGH | MEDIUM | LOW        DETERMINISTIC
+    trace_id:       str                                              # DETERMINISTIC
+    details:        str                                              # DETERMINISTIC
+    timestamp:      str = field(                                     # OBSERVABILITY
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
@@ -82,6 +96,14 @@ class GovernanceLayer:
         self.minimum_version = minimum_version or config.MINIMUM_CONTRACT_VERSION
         self._violations: deque[GovernanceViolation] = deque(maxlen=_MAX_VIOLATIONS)
 
+    # -- authority declaration ----------------------------------------------
+
+    @classmethod
+    def authority(cls):
+        """Return the formal authority declaration for this component."""
+        from governance_authority import GOVERNANCE_AUTHORITY
+        return GOVERNANCE_AUTHORITY
+
     # -- public interface ---------------------------------------------------
 
     def enforce(
@@ -91,13 +113,22 @@ class GovernanceLayer:
         """
         Apply governance policies, then delegate to RuntimeCore.
 
+        Pre-execution policies (GovernanceLayer's authority):
+            1. Producer type authorization
+            2. Contract version enforcement
+            3. Contract schema validation
+
+        Post-execution observation (recording only, not decision-making):
+            4. LOW_CONFIDENCE — recorded from RuntimeCore's HALT ACK
+            5. REPLAY_DETECTED — recorded from RuntimeCore's HALT ACK
+
         Returns
         -------
         (ExecutionResult, list_of_violations)
         """
         violations: list[GovernanceViolation] = []
 
-        # Policy 1 — Unauthorized producer type
+        # Policy 1 — Unauthorized producer type (GovernanceLayer authority)
         if contract.producer_type not in self.allowed_producers:
             v = GovernanceViolation(
                 violation_type="UNAUTHORIZED_PRODUCER",
@@ -114,7 +145,7 @@ class GovernanceLayer:
                 self._violations.extend(violations)
                 return self._halt(contract, "HALT:UNAUTHORIZED_PRODUCER"), violations
 
-        # Policy 2 — Contract version downgrade
+        # Policy 2 — Contract version downgrade (GovernanceLayer authority)
         try:
             contract_ver = _parse_semver(contract.contract_version)
             min_ver = _parse_semver(self.minimum_version)
@@ -146,7 +177,7 @@ class GovernanceLayer:
                 self._violations.extend(violations)
                 return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}"), violations
 
-        # Policy 3 — Invalid contract (full schema validation)
+        # Policy 3 — Invalid contract / full schema validation (GovernanceLayer authority)
         try:
             validate_contract(
                 contract,
@@ -166,21 +197,6 @@ class GovernanceLayer:
                 self._violations.extend(violations)
                 return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}"), violations
 
-        # Policy 4 — Low confidence (pre-check before core)
-        if contract.confidence < config.CORRUPTION_THRESHOLD:
-            v = GovernanceViolation(
-                violation_type="LOW_CONFIDENCE",
-                severity="HIGH",
-                trace_id=contract.trace_id,
-                details=(
-                    f"Confidence {contract.confidence:.4f} is below corruption "
-                    f"threshold {config.CORRUPTION_THRESHOLD}."
-                ),
-            )
-            violations.append(v)
-            self._log_violation(v)
-            # Always halt on critically low confidence, regardless of mode
-
         # Log warnings for non-critical violations in permissive mode
         for v in violations:
             if v not in self._violations:
@@ -189,12 +205,13 @@ class GovernanceLayer:
         # Store violations for auditing
         self._violations.extend(violations)
 
-        # Delegate to blind core
-        # (core also has its own replay guard and confidence checks)
+        # Delegate to blind core (RuntimeCore's authority from here)
+        # RuntimeCore owns: confidence thresholds, replay detection, ACK generation
         result = self.runtime.execute(contract)
 
-        # Policy 5 — Replay mismatch is handled by RuntimeCore internally
-        # We detect it from the result ACK for governance recording
+        # --- Post-execution observation (GovernanceLayer records, does not decide) ---
+
+        # Observe: REPLAY_DETECTED from RuntimeCore
         if "REPLAY_DETECTED" in result.ack:
             v = GovernanceViolation(
                 violation_type="REPLAY_MISMATCH",
@@ -204,6 +221,21 @@ class GovernanceLayer:
             )
             violations.append(v)
             self._violations.append(v)
+
+        # Observe: LOW_CONFIDENCE from RuntimeCore
+        if "LOW_CONFIDENCE" in result.ack:
+            v = GovernanceViolation(
+                violation_type="LOW_CONFIDENCE",
+                severity="HIGH",
+                trace_id=contract.trace_id,
+                details=(
+                    f"RuntimeCore halted due to low confidence: {result.ack}. "
+                    f"Confidence threshold enforcement is RuntimeCore's authority."
+                ),
+            )
+            violations.append(v)
+            self.violations.append(v)
+            self._log_violation(v)
 
         return result, violations
 

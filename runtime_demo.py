@@ -311,8 +311,8 @@ def phase_5_observability(q_contract, c_contract):
 
 
 def phase_6_distributed():
-    """Phase 6: Distributed readiness simulation."""
-    _banner("PHASE 6 — Distributed Readiness Simulation")
+    """Phase 6: Distributed readiness experiment."""
+    _banner("PHASE 6 — Distributed Readiness Experiment")
     sim = DistributedSimulation()
     proof = sim.run()
     print(f"  -- Phase 6 {'complete' if proof.passed else 'FAILED'} --")

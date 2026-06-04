@@ -7,6 +7,21 @@ metadata for observability and audit only.
 
 This is the key proof surface: quantum and classical contracts both traverse
 the exact same execute() method without any producer-aware conditional.
+
+RESPONSIBILITY BOUNDARY
+-----------------------
+RuntimeCore OWNS:
+    - Confidence threshold enforcement (CORRUPTION_THRESHOLD, CONFIDENCE_THRESHOLD)
+    - Replay detection (trace_id registry)
+    - ACK generation (OK, DEGRADED, HALT)
+    - Runtime hash computation (SHA-256 of execution path)
+
+RuntimeCore does NOT own:
+    - Producer type authorization  → GovernanceLayer
+    - Contract version policy      → GovernanceLayer
+    - Violation recording          → GovernanceLayer
+    - Adapter selection            → Adapter layer
+    - Payload content inspection   → Never (opaque by design)
 """
 
 from __future__ import annotations
@@ -40,21 +55,30 @@ class ExecutionResult:
 
     Fields
     ------
-    contract_trace_id   : The input contract's trace_id (passthrough).
-    producer_type       : Passthrough metadata — NOT used for branching.
-    ack                 : Deterministic acknowledgement string.
-    confidence          : The confidence from the input contract.
-    execution_timestamp : ISO-8601 time of execution.
-    runtime_hash        : SHA-256 hash of the runtime path taken.
+    contract_trace_id   : The input contract's trace_id (passthrough).   [DETERMINISTIC]
+    producer_type       : Passthrough metadata — NOT used for branching. [DETERMINISTIC]
+    ack                 : Deterministic acknowledgement string.          [DETERMINISTIC]
+    confidence          : The confidence from the input contract.        [DETERMINISTIC]
+    runtime_hash        : SHA-256 hash of the runtime path taken.       [DETERMINISTIC]
+    execution_timestamp : ISO-8601 time of execution.                   [OBSERVABILITY]
+
+    Determinism note: execution_timestamp is OBSERVABILITY metadata.
+    It records wall-clock time for audit/tracing purposes but is NOT
+    part of the deterministic output.  Two runs with identical inputs
+    will produce identical deterministic projections even though their
+    execution_timestamps differ.  See determinism_doctrine.py.
     """
-    contract_trace_id:  str
-    producer_type:      str
-    ack:                str
-    confidence:         float
-    execution_timestamp: str = field(
+    # --- DETERMINISTIC fields ---
+    contract_trace_id:  str                                # DETERMINISTIC
+    producer_type:      str                                # DETERMINISTIC
+    ack:                str                                # DETERMINISTIC
+    confidence:         float                              # DETERMINISTIC
+    runtime_hash:       str = ""                           # DETERMINISTIC
+
+    # --- OBSERVABILITY fields ---
+    execution_timestamp: str = field(                      # OBSERVABILITY
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    runtime_hash:       str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)

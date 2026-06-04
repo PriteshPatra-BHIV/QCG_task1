@@ -66,14 +66,22 @@ class ComputationExecutionContract:
     payload_hash         : SHA-256 of canonical payload for integrity.
     """
 
-    producer_type:         str
-    payload:               dict
-    confidence:            float
-    trace_id:              str
-    contract_version:      str
-    execution_constraints: dict  = field(default_factory=dict)
-    timestamp:             str   = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    payload_hash:          str   = ""
+    # --- DETERMINISTIC fields ---
+    # These fields MUST be identical for identical inputs (same seed, same message).
+    producer_type:         str                                     # DETERMINISTIC
+    payload:               dict                                    # DETERMINISTIC
+    confidence:            float                                   # DETERMINISTIC
+    trace_id:              str                                     # DETERMINISTIC
+    contract_version:      str                                     # DETERMINISTIC
+    execution_constraints: dict  = field(default_factory=dict)     # DETERMINISTIC
+    payload_hash:          str   = ""                              # DETERMINISTIC (auto-computed)
+
+    # --- OBSERVABILITY fields ---
+    # Wall-clock metadata.  Excluded from deterministic comparison.
+    # See determinism_doctrine.py for classification rationale.
+    timestamp:             str   = field(                          # OBSERVABILITY
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def __post_init__(self):
         # Compute payload_hash if not provided

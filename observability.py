@@ -10,6 +10,12 @@ adapter_trace      – Which adapter was used, mapping decisions.
 producer_lineage   – Chain: raw output → adapter → contract.
 contract_lineage   – Version, transformations, governance decisions.
 replay_proof       – Reconstruct the exact execution path, verify hashes.
+
+Determinism note
+----------------
+TraceEntry.timestamp and TraceEntry.entry_hash are OBSERVABILITY fields.
+Replay ordering uses a deterministic sequence counter (assigned at record
+time) instead of wall-clock timestamps.  See determinism_doctrine.py.
 """
 
 from __future__ import annotations
@@ -37,11 +43,12 @@ _MAX_TRACE_ENTRIES = 10_000  # cap to prevent unbounded memory growth
 @dataclass(frozen=True)
 class TraceEntry:
     """One entry in the trace store."""
-    trace_id:    str
-    trace_type:  str        # execution | adapter | producer_lineage | contract_lineage | governance
-    data:        dict
-    entry_hash:  str = ""
-    timestamp:   str = field(
+    trace_id:    str                                              # DETERMINISTIC
+    trace_type:  str                                              # DETERMINISTIC
+    data:        dict                                             # DETERMINISTIC
+    sequence:    int = 0                                          # DETERMINISTIC (ordering)
+    entry_hash:  str = ""                                         # OBSERVABILITY
+    timestamp:   str = field(                                     # OBSERVABILITY
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
@@ -69,21 +76,23 @@ class TraceEntry:
 @dataclass
 class ReplayProof:
     """Result of a replay reconstruction verification."""
-    trace_id:    str
-    is_valid:    bool
-    chain:       list[dict]
-    mismatches:  list[str]
-    timestamp:   str = field(
+    trace_id:     str                                             # DETERMINISTIC
+    is_valid:     bool                                            # DETERMINISTIC
+    chain:        list[dict]                                      # DETERMINISTIC
+    mismatches:   list[str]                                       # DETERMINISTIC
+    replay_target: str = "CONTRACT"                               # DETERMINISTIC — see replay_doctrine.py
+    timestamp:    str = field(                                    # OBSERVABILITY
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
     def to_dict(self) -> dict:
         return {
-            "trace_id":   self.trace_id,
-            "is_valid":   self.is_valid,
-            "chain":      self.chain,
-            "mismatches": self.mismatches,
-            "timestamp":  self.timestamp,
+            "trace_id":      self.trace_id,
+            "is_valid":      self.is_valid,
+            "chain":         self.chain,
+            "mismatches":    self.mismatches,
+            "replay_target": self.replay_target,
+            "timestamp":     self.timestamp,
         }
 
 
@@ -95,24 +104,35 @@ class TraceStore:
     """
     Thread-safe in-memory trace store.
 
-    Every trace entry is a frozen dataclass with a timestamp and hash.
-    The store supports recording, querying, and replay reconstruction.
+    Every trace entry is a frozen dataclass with a timestamp, sequence
+    number, and hash.  The store supports recording, querying, and replay
+    reconstruction.
+
+    Ordering: entries are ordered by a monotonically-increasing sequence
+    counter assigned at record time, NOT by wall-clock timestamps.
+    This ensures deterministic replay ordering regardless of clock skew.
     """
 
     def __init__(self):
         self._entries: deque[TraceEntry] = deque(maxlen=_MAX_TRACE_ENTRIES)
         self._lock = threading.Lock()
+        self._sequence_counter: int = 0
 
     # -- recording ----------------------------------------------------------
 
     def record(self, entry: TraceEntry) -> None:
-        """Append a trace entry to the store."""
+        """Append a trace entry to the store, assigning a sequence number."""
         with self._lock:
+            self._sequence_counter += 1
+            # Assign sequence number if not already set
+            if entry.sequence == 0:
+                object.__setattr__(entry, "sequence", self._sequence_counter)
             self._entries.append(entry)
         log_event(log, logging.DEBUG, "trace_recorded", ctx={
             "trace_id":   entry.trace_id,
             "trace_type": entry.trace_type,
             "entry_hash": entry.entry_hash,
+            "sequence":   entry.sequence,
         })
 
     def record_execution_trace(
@@ -259,6 +279,13 @@ class TraceStore:
         Reconstruct the full execution path for a given trace_id and
         verify hash chain integrity.
 
+        Ordering uses the deterministic trace_type priority, with
+        sequence numbers as a secondary key (NOT wall-clock timestamps).
+
+        The replay target is CONTRACT — this reconstructs the journey of
+        a single contract through the pipeline.  See replay_doctrine.py
+        for the full taxonomy of replay targets.
+
         Returns a ReplayProof indicating whether the chain is valid.
         """
         entries = self.query(trace_id=trace_id)
@@ -269,9 +296,11 @@ class TraceStore:
                 is_valid=False,
                 chain=[],
                 mismatches=["No trace entries found for trace_id."],
+                replay_target="CONTRACT",
             )
 
         # Order: producer_lineage → adapter → governance → execution → contract_lineage
+        # Secondary sort: sequence number (deterministic), NOT timestamp.
         type_order = {
             "producer_lineage": 0,
             "adapter":          1,
@@ -281,7 +310,7 @@ class TraceStore:
         }
         sorted_entries = sorted(
             entries,
-            key=lambda e: (type_order.get(e.trace_type, 99), e.timestamp),
+            key=lambda e: (type_order.get(e.trace_type, 99), e.sequence),
         )
 
         chain: list[dict] = []
@@ -308,6 +337,7 @@ class TraceStore:
             chain.append({
                 "trace_type": entry.trace_type,
                 "entry_hash": entry.entry_hash,
+                "sequence":   entry.sequence,
                 "timestamp":  entry.timestamp,
                 "data":       entry.data,
             })
@@ -320,13 +350,15 @@ class TraceStore:
             is_valid=is_valid,
             chain=chain,
             mismatches=mismatches,
+            replay_target="CONTRACT",
         )
 
         log_event(log, logging.INFO, "replay_reconstruction", ctx={
-            "trace_id":  trace_id,
-            "is_valid":  is_valid,
-            "chain_len": len(chain),
-            "mismatches": mismatches,
+            "trace_id":      trace_id,
+            "is_valid":      is_valid,
+            "chain_len":     len(chain),
+            "mismatches":    mismatches,
+            "replay_target": "CONTRACT",
         })
 
         return proof

@@ -1,14 +1,32 @@
 """
-distributed_simulation.py — Phase 6: Distributed Readiness
+distributed_simulation.py — Phase 6: Distributed Readiness Experiment
 
-Simulates a distributed runtime without networking:
+Simulates a distributed runtime without networking.
 
-- 2 producers  : one QuantumAdapter, one ClassicalAdapter
-- 3 nodes      : each with its own RuntimeCore + GovernanceLayer + TraceStore
-- Ordered propagation : contracts propagate Node_1 → Node_2 → Node_3
-- Hash agreement      : all 3 nodes must agree on the final execution hash
+SCOPE DECLARATION
+-----------------
+What this proves:
+    Deterministic hash agreement across simulated independent nodes
+    processing identical contract sequences in a single process.
 
-No networking needed — simulation only.
+What this does NOT prove:
+    - Network partition tolerance
+    - Real inter-node communication
+    - Byzantine fault tolerance
+    - Clock synchronization
+    - Consensus protocol correctness
+    - Message delivery guarantees
+
+Classification:
+    SIMULATION-LEVEL verification.
+    Pre-requisite for distributed execution readiness.
+    NOT equivalent to distributed execution readiness.
+
+Simulation topology:
+    - 2 producers  : one QuantumAdapter, one ClassicalAdapter
+    - 3 nodes      : each with its own RuntimeCore + GovernanceLayer + TraceStore
+    - Ordered propagation : contracts propagate Node_1 → Node_2 → Node_3
+    - Hash agreement      : all 3 nodes must agree on the final execution hash
 """
 
 import hashlib
@@ -101,14 +119,15 @@ class SimulatedNode:
 @dataclass
 class DistributedProof:
     """Result of the distributed simulation."""
-    passed:           bool
-    node_count:       int
-    producer_count:   int
+    passed:              bool
+    node_count:          int
+    producer_count:      int
     contracts_processed: int
-    hash_agreement:   bool
-    node_ledgers:     dict       # node_id → ledger
-    propagation_log:  list[dict]
-    timestamp:        str = field(
+    hash_agreement:      bool
+    node_ledgers:        dict       # node_id → ledger
+    propagation_log:     list[dict]
+    scope:               str = "SIMULATION"                       # METADATA — classification
+    timestamp:           str = field(                             # OBSERVABILITY
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
@@ -121,6 +140,7 @@ class DistributedProof:
             "hash_agreement":      self.hash_agreement,
             "node_ledgers":        self.node_ledgers,
             "propagation_log":     self.propagation_log,
+            "scope":               self.scope,
             "timestamp":           self.timestamp,
         }
 
@@ -132,6 +152,9 @@ class DistributedProof:
 class DistributedSimulation:
     """
     Simulate a distributed runtime with ordered propagation.
+
+    Classification: SIMULATION-LEVEL only.
+    See SCOPE DECLARATION in module docstring for boundaries.
     """
 
     def __init__(
@@ -147,15 +170,16 @@ class DistributedSimulation:
 
     def run(self) -> DistributedProof:
         """
-        Execute the distributed simulation.
+        Execute the distributed readiness experiment.
 
         1. Both producers generate contracts.
         2. Propagate through nodes in order.
         3. Each node processes independently.
         4. Verify hash agreement across all nodes.
         """
-        log_event(log, logging.INFO, "distributed_simulation_start", ctx={
+        log_event(log, logging.INFO, "distributed_experiment_start", ctx={
             "node_count": len(self.nodes),
+            "scope": "SIMULATION",
         })
 
         # -- Step 1: Generate contracts from both producers ----------------
@@ -221,18 +245,21 @@ class DistributedSimulation:
             hash_agreement=hash_agreement,
             node_ledgers=node_ledgers,
             propagation_log=propagation_log,
+            scope="SIMULATION",
         )
 
-        log_event(log, logging.INFO, "distributed_simulation_result", ctx={
+        log_event(log, logging.INFO, "distributed_experiment_result", ctx={
             "passed":         passed,
             "hash_agreement": hash_agreement,
             "ledger_agreement": ledger_agreement,
             "total_processed": total_processed,
+            "scope": "SIMULATION",
         })
 
         # Human-readable summary
         print("\n" + "=" * 70)
-        print("  DISTRIBUTED READINESS SIMULATION")
+        print("  DISTRIBUTED READINESS EXPERIMENT")
+        print("  Scope: SIMULATION-LEVEL (not distributed execution readiness)")
         print("=" * 70)
         print(f"  Nodes:     {len(self.nodes)}")
         print(f"  Producers: {len(contracts)}")
@@ -253,6 +280,7 @@ class DistributedSimulation:
         print("-" * 70)
         verdict = "PASSED" if passed else "FAILED"
         print(f"  VERDICT: {verdict}")
+        print("  NOTE: This proves simulation-level deterministic agreement only.")
         print("=" * 70 + "\n")
 
         return proof
