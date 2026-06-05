@@ -31,7 +31,7 @@ class AuthorityDeclaration:
     authority_not_owned: tuple[str, ...]
     execution_rights:   tuple[str, ...]
     authority_ceiling:  tuple[str, ...]
-    negative_authority: tuple[str, ...]\n
+    negative_authority: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------
