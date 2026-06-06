@@ -76,6 +76,11 @@ class ComputationExecutionContract:
     execution_constraints: dict  = field(default_factory=dict)     # DETERMINISTIC
     payload_hash:          str   = ""                              # DETERMINISTIC (auto-computed)
 
+    # --- PROVENANCE fields (Trust Layer) ---
+    producer_id:           str   = ""                              # PROVENANCE
+    producer_signature:    str   = ""                              # PROVENANCE
+    contract_signature:    str   = ""                              # PROVENANCE
+
     # --- OBSERVABILITY fields ---
     # Wall-clock metadata.  Excluded from deterministic comparison.
     # See determinism_doctrine.py for classification rationale.
