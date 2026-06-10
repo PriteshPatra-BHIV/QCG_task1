@@ -66,9 +66,21 @@ This project is that smart receiver.
 - Engineers connecting quantum hardware to existing classical infrastructure.
 - Teams building systems where quantum outputs must participate in operational decisions without becoming autonomous authorities.
 - Researchers needing a reliable, testable, auditable simulation of quantum-to-classical handoff.
+- Ecosystem participants (NICAI, InsightFlow, Pravah, Sampada) that need a producer-agnostic trust and verification engine.
 
 ---
 
 ## Key Guarantee
 
-Same inputs + same seed = identical contract, every time. Verified by running the pipeline 5 times and confirming zero mismatches across all 5 runs.
+Same inputs + same seed = identical contract, every time. Verified by running the pipeline 20 times and confirming zero mismatches across all 20 runs.
+
+---
+
+## What's New (Current Version)
+
+- **Communication Layer**: A producer-agnostic gateway (`gateway.py`) that handles QUANTUM, CLASSICAL, and HYBRID messages through the same `send()` method. All 4 cross-system paths are proven identical.
+- **Semantic Registry**: Every key term in the system has a precise, unambiguous definition in `semantic_registry.py`. If a term isn't registered, it's not a first-class concept.
+- **Authority Declarations**: Every policy component formally declares what it owns and what it may not do (`governance_authority.py`). Structural boundary validation is automated.
+- **Runtime Participation Proof**: `participation_proof.py` proves via bytecode inspection that QUANTUM and CLASSICAL contracts traverse the identical execution path — no branching.
+- **Ecosystem Participation**: The gateway is no longer quantum-specific. It is a universal trust engine for any ecosystem participant (`ecosystem_participation.py`).
+- **213 tests passing** (up from 122).

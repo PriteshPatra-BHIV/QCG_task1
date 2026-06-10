@@ -24,7 +24,7 @@ A system is production ready when it can be trusted to run in the real world —
 
 ---
 
-## Production Fixes (applied after doctrine layer was complete)
+## Production Fixes (applied after doctrine layer)
 
 | Fix | Why It Was Needed |
 |-----|------------------|
@@ -38,33 +38,54 @@ A system is production ready when it can be trusted to run in the real world —
 
 ---
 
+## Communication Layer Fixes (applied in current version)
+
+| Fix | Why It Was Needed |
+|-----|------------------|
+| `Receiver` seen-set capped at 100,000 | The seen-set for the communication gateway was unbounded. A long-running process with many unique message_ids would accumulate indefinitely → OOM. Now evicts oldest 10% when the cap is exceeded. |
+| `CommunicationRequest`, `TranslationContract`, `AcknowledgementContract` made frozen | All communication contracts are now immutable dataclasses — consistent with the `ClassicalContract` fix above. |
+| Payload hash is content-addressed (SHA-256) | `TranslationContract` carries a payload hash rather than raw payload, so downstream components never inspect raw producer data. |
+| `resolve_translation_status` uses config thresholds | Translation thresholds (`CONFIDENCE_THRESHOLD`, `CORRUPTION_THRESHOLD`) are read from `config.py`, not hardcoded — overridable via `.env`. |
+
+---
+
 ## Known Limitations
 
 | Limitation | Impact | Path Forward |
-|------------|--------|--------------|
+|------------|--------|--------------| 
 | Replay registry in-memory | Replay protection breaks across restarts and multi-instance deployments | Redis or a persistent DB before horizontal scaling |
 | TraceStore in-memory, capped at 10,000 | Traces are lost on restart; oldest entries are dropped after cap | Export to OpenTelemetry / Jaeger for distributed deployments |
-| No cryptographic lineage signatures | Lineage cannot be third-party verified (could be forged) | Add HMAC or asymmetric signature if non-repudiation is required |
+| No cryptographic lineage signatures (core layer) | Core layer lineage cannot be third-party verified | Add HMAC or asymmetric signature if non-repudiation required for core |
 | Quantum simulation synchronous | High request volumes will queue | Acceptable for prototype scale; async support is a future upgrade |
+| IPC transport is multiprocessing.Queue | Not a real network socket — unsuitable for distributed deployment | Replace with ZeroMQ or gRPC |
+| NodeRegistry is ephemeral | No certificate rotation or revocation | Requires persistent storage with revocation support |
+| issued_at is producer-reported wall-clock | Not a cryptographically signed timestamp | Add trusted time authority for strict TTL enforcement |
+| Consensus nodes share OS process memory | Logically independent but not network-separated | True isolation requires separate processes + real transport |
 
 ---
 
 ## Summary: Before vs After
 
-| Area | Initial State | After Original Fixes | After Production Fixes |
-|------|--------------|---------------------|------------------------|
-| Thread safety | Race conditions | Fully locked | — |
-| Rate limiting | None | Token-bucket limiter | — |
-| Input validation | Basic | Length + sanitization | — |
-| Config safety | No validation | Validated at startup | — |
-| Health check | None | Implemented | — |
-| Log accuracy | Slightly off | Accurate timestamps | — |
-| Dependency hygiene | pytest in prod | Separated | — |
-| Contract immutability | ClassicalContract mutable | — | Frozen |
-| Rejection log level | INFO (missed by monitoring) | — | WARNING |
-| Memory bounds | Unbounded lists | — | deque(maxlen=10_000) |
-| Python 3.9 compat | Type syntax errors | — | Fixed with __future__ |
-| requirements.txt | Wrong pinned versions | — | Corrected to actual tested versions |
-| .env.example | Incomplete | — | All keys documented |
+| Area | Initial State | After Original Fixes | After Production Fixes | After Current Version |
+|------|--------------|---------------------|------------------------|----------------------|
+| Thread safety | Race conditions | Fully locked | — | — |
+| Rate limiting | None | Token-bucket limiter | — | — |
+| Input validation | Basic | Length + sanitization | — | — |
+| Config safety | No validation | Validated at startup | — | — |
+| Health check | None | Implemented | — | — |
+| Log accuracy | Slightly off | Accurate timestamps | — | — |
+| Dependency hygiene | pytest in prod | Separated | — | — |
+| Contract immutability | ClassicalContract mutable | — | Frozen | Communication contracts also frozen |
+| Rejection log level | INFO (missed by monitoring) | — | WARNING | — |
+| Memory bounds (traces) | Unbounded lists | — | deque(maxlen=10_000) | — |
+| Python 3.9 compat | Type syntax errors | — | Fixed with __future__ | — |
+| requirements.txt | Wrong pinned versions | — | Corrected | — |
+| .env.example | Incomplete | — | All keys documented | — |
+| Communication gateway | None | — | — | Producer-agnostic, all 4 paths |
+| Seen-set bounds | N/A | — | — | Capped at 100,000 |
+| Semantic registry | None | — | — | 12 terms formally defined |
+| Authority declarations | None | — | — | Structural boundary validation |
+| Participation proof | Assertion-based | — | — | Bytecode-level structural evidence |
+| Test coverage | — | — | 122 tests | 213 tests |
 
 **The system is ready for single-instance production deployment.**

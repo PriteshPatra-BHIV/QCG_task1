@@ -1,22 +1,37 @@
 """
-node_identity.py — Phase 1: Node Identity Layer
+node_identity.py — Node Identity Layer
 
-Defines the cryptographically verifiable identity of a participant in the network.
-Provides signing and verification primitives.
+Cryptographically verifiable identity for every ecosystem participant.
+Uses ECDSA P-256 (secp256r1) via the `cryptography` package.
 
-Note on Cryptography:
-As per the approved plan, since external asymmetric crypto libraries (e.g. cryptography, ecdsa)
-are not in the environment, we use a secure HMAC simulation where the 'public_key' acts
-as the verification key. In a production environment, this would be replaced with ECDSA or RSA.
+Signature scheme
+----------------
+- Private key : ECDSA P-256, generated fresh per NodeSigner instance.
+- Public key  : DER-encoded SubjectPublicKeyInfo, hex-serialised for transport.
+- Signature   : DER-encoded ECDSA signature over SHA-256(canonical_payload), hex-serialised.
+- Verification: Standard ECDSA verify — no shared secret involved.
+
+This replaces the previous HMAC simulation in which the "public key" was
+used as the HMAC secret, making signature forgery trivial for any observer.
 """
 
+from __future__ import annotations
+
 import hashlib
-import hmac
 import json
 import secrets
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import (
+    decode_dss_signature,
+    encode_dss_signature,
+)
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.exceptions import InvalidSignature
+
 
 # ---------------------------------------------------------------------------
 # Node Identity Models
@@ -25,14 +40,14 @@ from typing import Any
 @dataclass(frozen=True)
 class NodeIdentity:
     """Represents a verified participant in the QCG ecosystem."""
-    node_id: str
-    public_key: str
-    node_role: str
-    version: str
+    node_id:    str
+    public_key: str   # hex-encoded DER SubjectPublicKeyInfo
+    node_role:  str
+    version:    str
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -40,88 +55,110 @@ class NodeIdentity:
 @dataclass(frozen=True)
 class NodeProof:
     """Cryptographic proof of a node's participation."""
-    node_id: str
-    signature: str
-    signed_hash: str
-    timestamp: str = field(
+    node_id:     str
+    signature:   str   # hex-encoded DER ECDSA signature
+    signed_hash: str   # hex SHA-256 of the signed payload
+    timestamp:   str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
-    
+
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 # ---------------------------------------------------------------------------
-# Signing & Verification Engine (Simulation)
+# Signing & Verification (ECDSA P-256)
 # ---------------------------------------------------------------------------
 
 class NodeSigner:
     """
-    Simulation of an asymmetric signer.
-    Generates a private key and a public key (verification key).
+    ECDSA P-256 signer.  Generates a fresh key pair on construction.
+    The private key never leaves this object.
     """
+
     def __init__(self, node_id: str, node_role: str = "EXECUTION_NODE", version: str = "1.0.0"):
-        # SIMULATION: Use a strong random hex as the private secret.
-        self._private_key = secrets.token_hex(32)
-        # SIMULATION: The public key is derived (in this mock, it's just a derived string).
-        # To allow verification without the private key, we use the public_key as the HMAC secret
-        # in this mock. In production, signature would be ECDSA.
-        self._public_key = hashlib.sha256(self._private_key.encode()).hexdigest()
-        
+        self._private_key = ec.generate_private_key(ec.SECP256R1())
+        pub_der = self._private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        self._public_key_hex = pub_der.hex()
+
         self.identity = NodeIdentity(
             node_id=node_id,
-            public_key=self._public_key,
+            public_key=self._public_key_hex,
             node_role=node_role,
-            version=version
+            version=version,
         )
 
     def sign_payload(self, payload: dict | str) -> NodeProof:
-        """Sign a payload and return a cryptographic proof of participation."""
-        if isinstance(payload, dict):
-            # Canonicalize dict
-            payload_str = json.dumps(payload, sort_keys=True, default=str)
-        else:
-            payload_str = str(payload)
-            
-        payload_hash = hashlib.sha256(payload_str.encode()).hexdigest()
-        
-        # SIMULATION: HMAC using the public key as the shared secret for easy local verification.
-        signature = hmac.new(
-            self._public_key.encode(),
-            payload_hash.encode(),
-            hashlib.sha256
-        ).hexdigest()
-        
+        """Sign a payload and return a cryptographic proof."""
+        payload_str = (
+            json.dumps(payload, sort_keys=True, default=str)
+            if isinstance(payload, dict)
+            else str(payload)
+        )
+        payload_bytes = payload_str.encode()
+        payload_hash = hashlib.sha256(payload_bytes).hexdigest()
+
+        # ECDSA sign over the payload bytes with SHA-256
+        sig_bytes = self._private_key.sign(
+            payload_bytes,
+            ec.ECDSA(hashes.SHA256()),
+        )
         return NodeProof(
             node_id=self.identity.node_id,
-            signature=signature,
-            signed_hash=payload_hash
+            signature=sig_bytes.hex(),
+            signed_hash=payload_hash,
         )
 
 
-def verify_node_proof(proof: NodeProof, public_key: str, payload: dict | str | None = None) -> bool:
+def verify_node_proof(
+    proof: NodeProof,
+    public_key_hex: str,
+    payload: dict | str | None = None,
+) -> bool:
     """
-    Verify a node's cryptographic proof.
-    If payload is provided, also verifies the signed_hash matches the payload.
+    Verify an ECDSA proof.
+
+    If `payload` is provided, first recomputes its hash and checks it matches
+    `proof.signed_hash`.  Then verifies the ECDSA signature.
+
+    Returns True on success, False on any failure (including malformed input).
     """
-    if payload is not None:
-        if isinstance(payload, dict):
-            payload_str = json.dumps(payload, sort_keys=True, default=str)
+    try:
+        payload_str = None
+        if payload is not None:
+            payload_str = (
+                json.dumps(payload, sort_keys=True, default=str)
+                if isinstance(payload, dict)
+                else str(payload)
+            )
+            expected_hash = hashlib.sha256(payload_str.encode()).hexdigest()
+            if expected_hash != proof.signed_hash:
+                return False
+
+        pub_der = bytes.fromhex(public_key_hex)
+        public_key = serialization.load_der_public_key(pub_der)
+
+        # We need the original payload bytes to verify; reconstruct from signed_hash
+        # by re-deriving payload_str if available, else use signed_hash as stand-in
+        if payload_str is not None:
+            verify_data = payload_str.encode()
         else:
-            payload_str = str(payload)
-        expected_hash = hashlib.sha256(payload_str.encode()).hexdigest()
-        if expected_hash != proof.signed_hash:
-            return False
-            
-    # SIMULATION: Verify HMAC using the public_key as the mock secret.
-    expected_signature = hmac.new(
-        public_key.encode(),
-        proof.signed_hash.encode(),
-        hashlib.sha256
-    ).hexdigest()
-    
-    # Use hmac.compare_digest to prevent timing attacks
-    return hmac.compare_digest(expected_signature, proof.signature)
+            # No payload provided — verify signature over the canonical bytes
+            # that produced signed_hash (we cannot reconstruct, so we verify
+            # the signature directly against the hash as a raw byte string)
+            verify_data = proof.signed_hash.encode()
+
+        public_key.verify(
+            bytes.fromhex(proof.signature),
+            verify_data,
+            ec.ECDSA(hashes.SHA256()),
+        )
+        return True
+    except (InvalidSignature, ValueError, Exception):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -129,44 +166,26 @@ def verify_node_proof(proof: NodeProof, public_key: str, payload: dict | str | N
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    print("=== NODE IDENTITY & SIGNING DEMO ===")
-    
-    # 1. Create a node
+    print("=== NODE IDENTITY & ECDSA SIGNING DEMO ===")
+
     signer = NodeSigner(node_id="NODE_ALPHA_001", node_role="QUANTUM_GATEWAY")
-    print(f"Node Created: {signer.identity.node_id}")
-    print(f"Public Key  : {signer.identity.public_key}")
-    
-    # 2. Sign some participation data
-    participation_event = {
-        "action": "contract_received",
-        "contract_trace_id": "abc-123-def",
-        "decision": "approve"
-    }
-    
-    print("\n[+] Signing Participation Event...")
-    proof = signer.sign_payload(participation_event)
-    print(f"Signature   : {proof.signature}")
-    print(f"Signed Hash : {proof.signed_hash}")
-    
-    # 3. Verify the proof
-    print("\n[+] Verifying Proof (Valid)...")
-    is_valid = verify_node_proof(proof, signer.identity.public_key, participation_event)
-    print(f"Verification Result: {'PASS' if is_valid else 'FAIL'}")
-    
-    # 4. Tamper with the payload and verify
-    tampered_event = dict(participation_event)
-    tampered_event["decision"] = "reject"
-    print("\n[+] Verifying Proof against Tampered Payload...")
-    is_tampered_valid = verify_node_proof(proof, signer.identity.public_key, tampered_event)
-    print(f"Verification Result: {'PASS' if is_tampered_valid else 'FAIL'}")
-    
-    # 5. Tamper with signature
-    tampered_proof = NodeProof(
-        node_id=proof.node_id,
-        signature="deadbeef" * 8,
-        signed_hash=proof.signed_hash,
-        timestamp=proof.timestamp
-    )
-    print("\n[+] Verifying Forged Signature...")
-    is_forged_valid = verify_node_proof(tampered_proof, signer.identity.public_key, participation_event)
-    print(f"Verification Result: {'PASS' if is_forged_valid else 'FAIL'}")
+    print(f"Node Created : {signer.identity.node_id}")
+    print(f"Public Key   : {signer.identity.public_key[:32]}...")
+
+    event = {"action": "contract_received", "trace_id": "abc-123", "decision": "approve"}
+
+    proof = signer.sign_payload(event)
+    print(f"\nSignature    : {proof.signature[:32]}...")
+    print(f"Signed Hash  : {proof.signed_hash}")
+
+    ok = verify_node_proof(proof, signer.identity.public_key, event)
+    print(f"\nValid proof  : {'PASS' if ok else 'FAIL'}")
+
+    tampered = {**event, "decision": "reject"}
+    ok_t = verify_node_proof(proof, signer.identity.public_key, tampered)
+    print(f"Tampered     : {'PASS' if ok_t else 'FAIL (correctly rejected)'}")
+
+    forged = NodeProof(node_id=proof.node_id, signature="aa" * 72,
+                       signed_hash=proof.signed_hash)
+    ok_f = verify_node_proof(forged, signer.identity.public_key, event)
+    print(f"Forged sig   : {'PASS' if ok_f else 'FAIL (correctly rejected)'}")

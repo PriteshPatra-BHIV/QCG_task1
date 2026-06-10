@@ -4,7 +4,7 @@ A plain-English guide to every file in the project.
 
 ---
 
-## Doctrine Layer — New in This Submission
+## Doctrine Layer
 
 ### `quantum_uncertainty.py` — The Uncertainty Classifier
 Wraps every quantum output in an explicit `UncertaintyEnvelope` before it touches the contract layer.
@@ -59,6 +59,88 @@ Runs all 5 cases (A–E) and proves each produces a clear, structured outcome. N
 
 ---
 
+## Communication Layer (new)
+
+### `communication_contract.py` — The Universal Message Schema
+Defines four frozen, immutable dataclasses that all producer types share:
+
+- `CommunicationRequest` — inbound message from any producer (QUANTUM, CLASSICAL, HYBRID)
+- `TranslationContract` — output of the translation step, carrying a content-addressed payload hash
+- `AcknowledgementContract` — deterministic receipt from the receiver
+- `CommunicationResponse` — full response envelope returned to the caller
+
+Also provides `make_message_id()` (deterministic UUID-5), `resolve_translation_status()`, and `resolve_transport_status()`.
+
+---
+
+### `gateway.py` — The Producer-Agnostic Communication Gateway
+The core of the communication layer. Contains:
+
+- `QuantumProducer` — wraps the Qiskit pipeline into a CommunicationRequest
+- `ClassicalProducer` — wraps a classical result dict into a CommunicationRequest
+- `HybridProducer` — merges quantum + classical into a HYBRID CommunicationRequest
+- `Receiver` — issues deterministic AcknowledgementContracts; detects replays; bounded seen-set (100,000 cap)
+- `CommunicationGateway` — routes all producer types through the same `send()` method with rate limiting
+
+**The gateway does not branch on source_type**. All 4 cross-system paths (Q→C, C→Q, H→C, H→Q) call `gateway.send()` identically.
+
+---
+
+### `simulation.py` — The Cross-System Simulation
+Runs all 4 communication scenarios through the same `CommunicationGateway.send()` and prints a structured trace for each. Proves no special-case routing exists.
+
+---
+
+## Semantic & Authority Layer (new)
+
+### `semantic_registry.py` — The Canonical Term Dictionary
+Defines 12 first-class concepts with precise, unambiguous definitions:
+`contract`, `truth`, `determinism`, `confidence`, `replay`, `governance`, `authority`, `hybrid`, `execution`, `producer`, `runtime`, `trace`.
+
+Each entry includes: definition, scope (which files), what it's distinguished from, and usage examples. If a term isn't in this registry, it's not a first-class concept in the system.
+
+---
+
+### `governance_authority.py` — The Authority Boundary Declarations
+Formally declares the authority of three components:
+
+- `GovernanceLayer` — what it owns (producer authorization, version enforcement, violation recording) and what it may NOT do (inspect payload internals, modify contracts, duplicate RuntimeCore logic)
+- `RuntimeCore` — what it owns (confidence thresholds, replay detection, ACK generation) and what it may NOT do (branch on producer_type, inspect payload)
+- `TraceStore` — what it owns (append-only trace recording, hash chain integrity) and what it may NOT do (modify contracts, authorize execution)
+
+Includes `validate_authority_boundaries()` — automated structural verification that checks source code, not assertions.
+
+---
+
+### `participation_proof.py` — The Runtime Participation Proof
+Proves via **structural evidence** that QUANTUM and CLASSICAL producers both execute through the identical `RuntimeCore.execute()` code path:
+
+1. Same interface (both return `ExecutionResult` with identical keys)
+2. Different producer origin (QUANTUM vs CLASSICAL)
+3. Same runtime instance — object identity verified
+4. No producer-type branching — bytecode constants and names inspected; `QUANTUM`, `CLASSICAL`, `HYBRID` literals absent from `execute()`
+5. Same bytecode object — code object id confirmed identical across both calls
+6. Valid SHA-256 runtime hashes on both results
+7. Contract version parity
+
+Exit 0 = all 8 checks pass.
+
+---
+
+### `ecosystem_participation.py` — The Ecosystem Trust Engine
+Demonstrates the gateway as a universal trust infrastructure for 6 ecosystem participants:
+
+- Participant A: Quantum Producer
+- Participant B: Classical Producer
+- Participant C: NICAI (future consumer)
+- Participant D: InsightFlow (future consumer)
+- Participant E: Pravah (future consumer)
+- Participant F: Sampada (future consumer)
+
+Each participant goes through: NodeRegistry registration → contract signing → TrustChain handoffs → MerkleAuditTrail → ConsensusEngine → ReplayBundle verification.
+
+---
+
 ## Core Gateway Layer
 
 ### `config.py` — The Settings Panel
@@ -97,7 +179,7 @@ Runs the full pipeline. Enforces rate limiting (token-bucket). Guards against re
 ---
 
 ### `determinism_proof.py` — The Consistency Checker (Layer 6)
-Runs the same transmission 5 times with the same seed and verifies all outputs are identical. Exit 0 = pass.
+Runs the same transmission 20 times with the same seed and verifies all outputs are identical. Also includes failure injection proof. Exit 0 = pass.
 
 ---
 
@@ -136,15 +218,50 @@ Simulates N nodes processing the same contracts and verifies ledger hash agreeme
 
 ---
 
+### `runtime_demo.py` — The Full 6-Phase Demo
+Runs all 6 demonstration phases in sequence: contract creation, adapter mapping, runtime participation proof, governance boundary tests, observability + replay reconstruction, distributed readiness simulation.
+
+---
+
+## Trust Layer
+
+| File | Role |
+|------|------|
+| `node_identity.py` | NodeIdentity, NodeSigner (ECDSA P-256), NodeProof |
+| `provenance.py` | Contract signing and provenance verification |
+| `consensus_simulation.py` | Distributed consensus with ECDSA attestations, 66% quorum |
+| `replay_bundle.py` | Complete execution lineage artifact |
+| `byzantine_simulation.py` | Byzantine fault tolerance (6 cases) |
+| `audit_trail.py` | Merkle tamper-evident audit trail |
+| `trust_chain.py` | Chain-of-custody with NodeRegistry |
+| `determinism_doctrine.py` | Field classification oracle (DETERMINISTIC / OBSERVABILITY / RUNTIME_ONLY) |
+
+---
+
+## Execution Infrastructure
+
+| File | Role |
+|------|------|
+| `replay_enforcer.py` | Sequence tracking, TTL, ACCEPTED/REJECTED_DUPLICATE/REJECTED_STALE |
+| `producer_process.py` | Independent OS process: contract production |
+| `execution_process.py` | Independent OS process: replay enforcement + execution |
+| `consensus_process.py` | Independent OS process: consensus verification |
+| `process_runner.py` | Orchestrator: spawns 3 processes, crash detection |
+
+---
+
 ## Tests
 
 ### `tests/test_all.py`
-52 tests covering the core gateway: input validation, quantum producer, translation layer, gateway pipeline, failure scenarios, determinism proof, thread safety.
+65 tests covering the core gateway: input validation, quantum producer, translation layer, gateway pipeline, failure scenarios, determinism proof (5-run + 20-run), replay enforcer, trust chain, audit trail, consensus.
 
 ### `tests/test_adapter_layer.py`
-70 tests covering the adapter layer: execution contracts, adapters, runtime core, governance, observability, distributed simulation, cross-phase integration.
+74 tests covering the adapter layer: execution contracts, adapters, runtime core, governance, observability, distributed simulation, cross-phase integration.
 
-**Total: 122 tests, all passing.**
+### `tests/test_communication_layer.py`
+74 tests covering the communication layer: CommunicationRequest, TranslationContract, AcknowledgementContract, CommunicationResponse, Receiver (including thread-safety), CommunicationGateway, QuantumProducer, ClassicalProducer, HybridProducer, all 4 cross-system paths.
+
+**Total: 213 tests, all passing.**
 
 ---
 

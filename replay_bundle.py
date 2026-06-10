@@ -136,17 +136,20 @@ class ReplayBundle:
             self.verification_status = "FAIL"
             return "FAIL"
 
-        # 2. Verify Producer signature on payload
-        prod_proof = NodeProof(
-            node_id=self.producer_lineage.producer_id,
-            signature=self.producer_lineage.producer_signature,
-            signed_hash=hashlib.sha256(
-                self.producer_lineage.payload_hash.encode()
-            ).hexdigest(),
-            timestamp="",
-        )
+        # 2. Verify Producer signature on payload_hash string
+        # producer.sign_payload(payload_hash) was called with a str,
+        # so verify must also receive the same str.
         prod_sig_ok = verify_node_proof(
-            prod_proof, producer_public_key, self.producer_lineage.payload_hash
+            NodeProof(
+                node_id=self.producer_lineage.producer_id,
+                signature=self.producer_lineage.producer_signature,
+                signed_hash=hashlib.sha256(
+                    self.producer_lineage.payload_hash.encode()
+                ).hexdigest(),
+                timestamp="",
+            ),
+            producer_public_key,
+            self.producer_lineage.payload_hash,   # str — matches sign_payload(str)
         )
         details["producer_signature"] = "PASS" if prod_sig_ok else "FAIL"
         if not prod_sig_ok:

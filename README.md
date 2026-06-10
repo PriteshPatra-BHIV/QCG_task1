@@ -53,14 +53,25 @@ cp .env.example .env   # optional: tune thresholds / log format
 # Full gateway demo + failure tests
 python hybrid_gateway.py
 
-# Determinism proof (exits 0 on pass, 1 on fail)
+# Determinism proof (20 runs, exits 0 on pass, 1 on fail)
 python determinism_proof.py
+
+# Three-process pipeline demo
+python process_runner.py
+
+# Crash simulation
+python process_runner.py --crash producer
+python process_runner.py --crash execution
+python process_runner.py --crash consensus
+
+# Replay enforcer demo
+python replay_enforcer.py
 ```
 
 ## Test
 
 ```bash
-pytest tests/ -v
+pytest tests/ -v  # 213 tests, 0 failures
 ```
 
 ## Configuration
@@ -71,14 +82,55 @@ See `.env.example` for the full list.
 ## File Structure
 
 ```
-config.py            -- All constants, env-overridable
-logger.py            -- Structured JSON logger
-models.py            -- Typed, validated data models
-quantum_producer.py  -- Layer 1: Qiskit quantum simulation
-translation_layer.py -- Layer 2: QuantumDistribution -> ClassicalContract
-hybrid_gateway.py    -- Layers 3+4+5: Gateway, devices, failure handling
-determinism_proof.py -- Layer 6: Determinism verification
-tests/test_all.py    -- Full pytest suite
-.env.example         -- Config reference
-requirements.txt     -- Dependencies
+# Core pipeline
+config.py                  -- All constants, env-overridable
+logger.py                  -- Structured JSON logger
+models.py                  -- Typed, validated data models
+quantum_producer.py        -- Layer 1: Qiskit quantum simulation
+translation_layer.py       -- Layer 2: QuantumDistribution -> ClassicalContract
+hybrid_gateway.py          -- Layers 3+4+5: Gateway, devices, failure handling
+determinism_proof.py       -- Layer 6: Determinism verification (20 runs + failure injection)
+tests/test_all.py          -- Full pytest suite (65 tests)
+.env.example               -- Config reference
+requirements.txt           -- Dependencies
+
+# Phase 2: Trust Layer
+node_identity.py           -- NodeIdentity, NodeSigner, NodeProof
+provenance.py              -- Contract signing and provenance verification
+consensus_simulation.py    -- Distributed consensus with signed attestations
+replay_bundle.py           -- Complete execution lineage artifact
+byzantine_simulation.py    -- Byzantine fault tolerance (6 cases)
+audit_trail.py             -- Merkle tamper-evident audit trail
+trust_chain.py             -- Chain-of-custody with NodeRegistry
+determinism_doctrine.py    -- Field classification oracle
+
+# Phase 3: Execution Infrastructure
+replay_enforcer.py         -- Sequence tracking, TTL, ACCEPTED/REJECTED_DUPLICATE/REJECTED_STALE
+producer_process.py        -- Independent OS process: contract production
+execution_process.py       -- Independent OS process: replay enforcement + execution
+consensus_process.py       -- Independent OS process: consensus verification
+process_runner.py          -- Orchestrator: spawns 3 processes, crash detection
+logs/process_1.log         -- Producer process evidence
+logs/process_2.log         -- Execution process evidence
+logs/process_3.log         -- Consensus process evidence
+
+# Communication Layer
+communication_contract.py  -- CommunicationRequest, TranslationContract, AcknowledgementContract, CommunicationResponse
+gateway.py                 -- Producer-agnostic CommunicationGateway (Q/C/H → same send())
+simulation.py              -- All 4 cross-system paths (Q→C, C→Q, H→C, H→Q)
+
+# Semantic & Authority Layer
+semantic_registry.py       -- 12 canonical term definitions
+governance_authority.py    -- Explicit authority declarations for GovernanceLayer, RuntimeCore, TraceStore
+participation_proof.py     -- Bytecode-level proof of identical execution path across producer types
+ecosystem_participation.py -- 6 ecosystem participants through universal trust pipeline
+runtime_demo.py            -- Full 6-phase demonstration
+
+# Handover documents
+ARCHITECTURE.md            -- System architecture reference
+DETERMINISM_DOCTRINE.md    -- Field classification table
+REPLAY_ENFORCEMENT.md      -- Replay protection specification
+PROCESS_MODEL.md           -- Multi-process architecture
+TEST_RESULTS.md            -- Evidence matrix (213/213 pass)
+review_packets/PHASE3_REVIEW_PACKET.md  -- Phase 3 submission review packet
 ```

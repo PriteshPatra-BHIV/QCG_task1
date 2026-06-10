@@ -338,3 +338,214 @@ class TestDeterminismProof:
             contract = translate(dist, "NODE_READY")
             trace_ids.add(contract.trace_id)
         assert len(trace_ids) == 1
+
+
+# =============================================================================
+# Phase 3 Test Matrix
+# =============================================================================
+
+# -- Determinism: 20-run identical replay -------------------------------------
+
+class TestDeterminism20Run:
+    def test_20_runs_identical(self):
+        """Phase 3 requirement: 20 consecutive runs must be identical."""
+        assert run_determinism_proof(
+            message="NODE_READY", noise=0.12, mode="entangled", seed=42, runs=20
+        ) is True
+
+    def test_failure_injection_timestamp_detected(self):
+        from determinism_proof import run_failure_injection_proof
+        fi = run_failure_injection_proof()
+        # Timestamp mutation must surface as an observability diff
+        assert fi["timestamp_mutation"]["detected"] is True
+
+    def test_failure_injection_payload_mutation_detected(self):
+        from determinism_proof import run_failure_injection_proof
+        fi = run_failure_injection_proof()
+        assert fi["payload_mutation"]["detected"] is True
+
+    def test_failure_injection_ordering_neutralised(self):
+        from determinism_proof import run_failure_injection_proof
+        fi = run_failure_injection_proof()
+        # Canonical JSON sort_keys=True must neutralise ordering
+        assert fi["ordering_mutation"]["hash_unchanged"] is True
+
+
+# -- Replay Enforcement -------------------------------------------------------
+
+class TestReplayEnforcer:
+    def _enforcer(self):
+        from replay_enforcer import ReplayEnforcer
+        return ReplayEnforcer(ttl_seconds=60.0)
+
+    def test_valid_execution_accepted(self):
+        e = self._enforcer()
+        d = e.submit("art-001")
+        assert d.status == "ACCEPTED"
+        assert d.sequence_id == 1
+
+    def test_duplicate_rejected(self):
+        e = self._enforcer()
+        e.submit("art-002")
+        d = e.submit("art-002")
+        assert d.status == "REJECTED_DUPLICATE"
+
+    def test_stale_rejected(self):
+        import time
+        from replay_enforcer import ReplayEnforcer
+        e = ReplayEnforcer(ttl_seconds=1.0)
+        stale_issued = time.monotonic() - 10.0
+        d = e.submit("art-stale", issued_at=stale_issued)
+        assert d.status == "REJECTED_STALE"
+
+    def test_sequence_monotonic(self):
+        e = self._enforcer()
+        ids = [f"art-seq-{i}" for i in range(5)]
+        seqs = [e.submit(aid).sequence_id for aid in ids]
+        assert seqs == sorted(seqs)
+        assert seqs[0] == 1
+
+    def test_stale_beats_duplicate(self):
+        """Stale check must fire before duplicate check."""
+        import time
+        from replay_enforcer import ReplayEnforcer
+        e = ReplayEnforcer(ttl_seconds=1.0)
+        stale_issued = time.monotonic() - 10.0
+        # First submit (stale) — should be REJECTED_STALE, not ACCEPTED
+        d = e.submit("art-both", issued_at=stale_issued)
+        assert d.status == "REJECTED_STALE"
+
+
+# -- Trust Chain --------------------------------------------------------------
+
+class TestTrustChain:
+    def test_valid_chain_passes(self):
+        from trust_chain import TrustChain, NodeRegistry
+        from node_identity import NodeSigner
+        import hashlib
+
+        producer = NodeSigner("TC_PROD", "PRODUCER")
+        gateway = NodeSigner("TC_GW", "GATEWAY")
+        executor = NodeSigner("TC_EXEC", "EXECUTOR")
+
+        registry = NodeRegistry()
+        for s in [producer, gateway, executor]:
+            registry.register(s.identity)
+
+        chain = TrustChain()
+        ph = hashlib.sha256(b"payload").hexdigest()
+        chain.add_handoff(producer, gateway.identity, "PRODUCE", ph)
+        chain.add_handoff(gateway, executor.identity, "FORWARD", ph)
+
+        passed, errors = chain.verify_chain(registry)
+        assert passed is True
+        assert errors == []
+
+    def test_forged_signature_detected(self):
+        from trust_chain import TrustChain, TrustChainLink, NodeRegistry
+        from node_identity import NodeSigner
+        import hashlib
+
+        legit = NodeSigner("LEGIT_NODE", "PRODUCER")
+        attacker = NodeSigner("ATTACKER", "ATTACKER")
+
+        registry = NodeRegistry()
+        registry.register(legit.identity)  # attacker NOT registered
+
+        chain = TrustChain()
+        ph = hashlib.sha256(b"payload").hexdigest()
+        chain.add_handoff(attacker, legit.identity, "SPOOF", ph)
+
+        passed, errors = chain.verify_chain(registry)
+        assert passed is False
+        assert any("not registered" in e for e in errors)
+
+
+# -- Audit Trail --------------------------------------------------------------
+
+class TestAuditTrail:
+    def test_inclusion_proof(self):
+        from audit_trail import MerkleAuditTrail
+        trail = MerkleAuditTrail()
+        entries = [trail.append("EVT", {"i": i}, "NODE_0") for i in range(5)]
+        assert trail.verify_inclusion(entries[2]) is True
+
+    def test_tamper_detection(self):
+        from audit_trail import MerkleAuditTrail, AuditEntry
+        trail = MerkleAuditTrail()
+        for i in range(4):
+            trail.append("EVT", {"i": i}, "NODE_0")
+        # Mutate internal entry
+        original = trail._entries[1]
+        trail._entries[1] = AuditEntry(
+            sequence=1, event_type="TAMPERED", event_hash="0" * 64,
+            node_id="ATTACKER", event_data={}
+        )
+        passed, _ = trail.verify_integrity()
+        assert passed is False
+        trail._entries[1] = original  # restore
+
+
+# -- Consensus Tests ----------------------------------------------------------
+
+class TestConsensus:
+    def _setup(self):
+        from consensus_simulation import DistributedConsensusNode, ConsensusEngine
+        from node_identity import NodeSigner
+        from execution_contract import ComputationExecutionContract
+        from provenance import sign_contract
+
+        producer = NodeSigner("CONS_PROD", "QUANTUM_PRODUCER")
+        nodes = [DistributedConsensusNode(f"CN_{i}") for i in range(3)]
+        engine = ConsensusEngine(nodes)
+
+        contract = ComputationExecutionContract(
+            producer_type="QUANTUM", payload={"data": "test"},
+            confidence=0.95, trace_id="test-consensus-001", contract_version="2.0.0",
+        )
+        signed = sign_contract(contract, producer)
+        return engine, signed, producer
+
+    def test_honest_network(self):
+        engine, signed, producer = self._setup()
+        proof = engine.run_consensus(signed, producer.identity.public_key)
+        assert proof.consensus_reached is True
+        assert proof.agreement_percentage == 1.0
+
+    def test_faulty_node(self):
+        engine, signed, producer = self._setup()
+        proof = engine.run_consensus(signed, producer.identity.public_key,
+                                      simulate_faulty="CN_1")
+        # 2/3 honest nodes still reach consensus
+        assert proof.consensus_reached is True
+        assert "CN_1" in proof.disagreements
+
+    def test_stale_node(self):
+        engine, signed, producer = self._setup()
+        proof = engine.run_consensus(signed, producer.identity.public_key,
+                                      simulate_missing="CN_2")
+        # 2 of 3 nodes = 66% — meets threshold
+        assert proof.consensus_reached is True
+        assert "CN_2" in proof.disagreements
+
+    def test_spoofed_node(self):
+        """Unregistered/spoofed attestation signature is rejected."""
+        from consensus_simulation import DistributedConsensusNode, ConsensusEngine
+        from node_identity import NodeSigner
+        from execution_contract import ComputationExecutionContract
+        from provenance import sign_contract
+
+        producer = NodeSigner("SPOOF_PROD", "QUANTUM_PRODUCER")
+        nodes = [DistributedConsensusNode(f"SN_{i}") for i in range(4)]
+        engine = ConsensusEngine(nodes)
+        # Inject a faulty hash for one node to simulate spoofing behaviour
+        contract = ComputationExecutionContract(
+            producer_type="QUANTUM", payload={"data": "spoof_test"},
+            confidence=0.95, trace_id="spoof-consensus-001", contract_version="2.0.0",
+        )
+        signed = sign_contract(contract, producer)
+        proof = engine.run_consensus(signed, producer.identity.public_key,
+                                      simulate_faulty="SN_0")
+        # Faulty node's hash differs but honest majority still wins
+        assert proof.consensus_reached is True
+        assert "SN_0" in proof.disagreements

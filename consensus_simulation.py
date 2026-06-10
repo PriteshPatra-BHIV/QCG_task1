@@ -26,6 +26,7 @@ from execution_contract import ComputationExecutionContract
 from runtime_core import RuntimeCore
 from node_identity import NodeSigner, NodeProof, verify_node_proof
 from provenance import verify_contract_provenance, ProvenanceStatus
+import config
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +129,7 @@ class ConsensusEngine:
     """Simulates the network consensus phase with attestation verification."""
     def __init__(self, nodes: list[DistributedConsensusNode]):
         self.nodes = nodes
-        self.threshold = 0.66  # BFT standard: 2/3 majority
+        self.threshold = config.CONSENSUS_QUORUM_THRESHOLD
 
     def run_consensus(
         self,

@@ -1,0 +1,4 @@
+{"pid": 11444, "role": "CONSENSUS", "event": "started", "ts": "2026-06-10T11:53:31Z"}
+{"pid": 11444, "role": "CONSENSUS", "event": "consensus_complete", "trace_id": "proc-trace-001", "reached": true, "agreement": "100%", "ts": "2026-06-10T11:53:32Z"}
+{"pid": 11444, "role": "CONSENSUS", "event": "received DONE, shutting down", "ts": "2026-06-10T11:53:32Z"}
+{"pid": 11444, "role": "CONSENSUS", "event": "finished", "ts": "2026-06-10T11:53:32Z"}

@@ -1,0 +1,5 @@
+{"pid": 8856, "role": "EXECUTION", "event": "started", "ts": "2026-06-10T11:53:31Z"}
+{"pid": 8856, "role": "EXECUTION", "event": "replay_check", "trace_id": "proc-trace-001", "status": "ACCEPTED", "seq": 1, "ts": "2026-06-10T11:53:32Z"}
+{"pid": 8856, "role": "EXECUTION", "event": "executed", "trace_id": "proc-trace-001", "ack": "ACK:OK", "runtime_hash": "8c01874553dc0d36", "ts": "2026-06-10T11:53:32Z"}
+{"pid": 8856, "role": "EXECUTION", "event": "received DONE, shutting down", "ts": "2026-06-10T11:53:32Z"}
+{"pid": 8856, "role": "EXECUTION", "event": "finished", "ts": "2026-06-10T11:53:32Z"}

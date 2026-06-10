@@ -4,9 +4,9 @@
 > what each file does, how decisions are made, whether it's production ready,
 > and how to run it.
 
-**Last Updated:** 2025-06-03
+**Last Updated:** 2025-06-10
 **Status:** Production-ready (single-instance)
-**Test Suite:** 122/122 passing
+**Test Suite:** 213/213 passing
 
 ---
 
@@ -56,7 +56,7 @@ This rule is enforced in code and proven at runtime. It is not just a design pri
 
 ### Key Guarantee
 
-Same inputs + same seed = identical output, every time. This is verified by running the pipeline 5 times and confirming zero mismatches.
+Same inputs + same seed = identical output, every time. This is verified by running the pipeline 20 times and confirming zero mismatches.
 
 ---
 
@@ -130,7 +130,7 @@ The pipeline is complete. The quantum layer stayed probabilistic the whole time.
 
 ## 3. What Each File Does
 
-### Doctrine Layer (new in this submission)
+### Doctrine Layer
 
 | File | Phase | Role |
 |------|-------|------|
@@ -148,7 +148,24 @@ The pipeline is complete. The quantum layer stayed probabilistic the whole time.
 | `quantum_producer.py` | 1 | Qiskit superdense coding simulation. Returns QuantumDistribution. |
 | `translation_layer.py` | 2 | Converts quantum output to ClassicalContract. Raises TranslationError on rejection. |
 | `hybrid_gateway.py` | 3–5 | Orchestrates pipeline, rate limiting, replay guard, health check. |
-| `determinism_proof.py` | 6 | 5-run seed-locked determinism verification. |
+| `determinism_proof.py` | 6 | 20-run seed-locked determinism verification + failure injection. |
+
+### Communication Layer (new)
+
+| File | Role |
+|------|------|
+| `communication_contract.py` | Defines CommunicationRequest, TranslationContract, AcknowledgementContract, CommunicationResponse — the shared schema for all producer types. |
+| `gateway.py` | CommunicationGateway: producer-agnostic translation gateway. QuantumProducer, ClassicalProducer, HybridProducer, Receiver. All 4 cross-system paths (Q→C, C→Q, H→C, H→Q) use the same `send()` method. |
+| `simulation.py` | Runs all 4 cross-system communication scenarios through the same gateway. |
+
+### Semantic & Authority Layer (new)
+
+| File | Role |
+|------|------|
+| `semantic_registry.py` | Canonical term definitions for all 12 first-class concepts (contract, truth, determinism, confidence, replay, governance, authority, hybrid, execution, producer, runtime, trace). |
+| `governance_authority.py` | Explicit authority declarations for GovernanceLayer, RuntimeCore, and TraceStore — what each owns, what it may not do, and structural boundary validation. |
+| `participation_proof.py` | Runtime proof that QUANTUM and CLASSICAL producers traverse the identical RuntimeCore.execute() code path — verified via bytecode inspection, object identity, and structural evidence. |
+| `ecosystem_participation.py` | Demonstrates the gateway as a universal trust engine for 6 ecosystem participants (quantum, classical, NICAI, InsightFlow, Pravah, Sampada). |
 
 ### Adapter / Runtime Layer
 
@@ -160,6 +177,30 @@ The pipeline is complete. The quantum layer stayed probabilistic the whole time.
 | `governance.py` | Policy enforcement wrapping RuntimeCore. 5 failure policies. Never crashes. |
 | `observability.py` | TraceStore — records and reconstructs full execution lineage. Bounded to 10,000 entries. |
 | `distributed_simulation.py` | Multi-node simulation with hash-chain ledger agreement proof. |
+| `runtime_demo.py` | Full 6-phase demonstration: contract creation → adapters → participation proof → governance → observability → distributed. |
+
+### Trust Layer
+
+| File | Role |
+|------|------|
+| `node_identity.py` | NodeIdentity, NodeSigner (ECDSA P-256), NodeProof. |
+| `provenance.py` | Contract signing and provenance verification. |
+| `consensus_simulation.py` | Distributed consensus with ECDSA attestations, 66% quorum. |
+| `replay_bundle.py` | Complete execution lineage artifact. |
+| `byzantine_simulation.py` | Byzantine fault tolerance (6 cases). |
+| `audit_trail.py` | Merkle tamper-evident audit trail. |
+| `trust_chain.py` | Chain-of-custody with NodeRegistry. |
+| `determinism_doctrine.py` | Field classification oracle. |
+
+### Execution Infrastructure
+
+| File | Role |
+|------|------|
+| `replay_enforcer.py` | Sequence tracking, TTL, ACCEPTED/REJECTED_DUPLICATE/REJECTED_STALE. |
+| `producer_process.py` | Independent OS process: contract production. |
+| `execution_process.py` | Independent OS process: replay enforcement + execution. |
+| `consensus_process.py` | Independent OS process: consensus verification. |
+| `process_runner.py` | Orchestrator: spawns 3 processes, crash detection. |
 
 ### Infrastructure
 
@@ -195,16 +236,29 @@ The pipeline is complete. The quantum layer stayed probabilistic the whole time.
 | REJECT | confidence < 0.40 OR bit mismatch | No |
 | HALT | replay detected OR rate limit exceeded | No |
 
+### Communication Layer Translation
+
+All producer types (QUANTUM, CLASSICAL, HYBRID) produce a CommunicationRequest. The gateway resolves it to one of three translation statuses:
+
+| Status | Condition |
+|--------|-----------|
+| OK | confidence ≥ CONFIDENCE_THRESHOLD (0.70) |
+| DEGRADED | confidence in [CORRUPTION_THRESHOLD, CONFIDENCE_THRESHOLD) |
+| REJECTED | confidence < CORRUPTION_THRESHOLD (0.40) |
+
+Which maps to transport status: `ACK:OK`, `ACK:DEGRADED:confidence=X`, or `HALT:TRANSLATION_REJECTED:confidence=X`.
+
 ### All HALT Responses
 
 | Response | Cause |
 |----------|-------|
 | `HALT:TRANSLATION_FAILURE` | Signal too noisy to translate |
-| `HALT:REPLAY_DETECTED` | Same trace_id received twice |
+| `HALT:REPLAY_DETECTED` | Same trace_id or message_id received twice |
 | `HALT:RATE_LIMIT_EXCEEDED` | Too many requests per minute |
 | `HALT:INVALID_INPUT` | Empty, oversized, or invalid message |
 | `HALT:CONTRACT_DOWNGRADE` | Contract version below minimum |
 | `HALT:UNAUTHORIZED_PRODUCER` | Producer type not in allowed set |
+| `HALT:TRANSLATION_REJECTED` | Confidence below rejection floor |
 | `HALT:UNEXPECTED` | Unhandled internal exception (always logged) |
 
 The system never crashes. Every code path returns one of the above.
@@ -226,6 +280,8 @@ The system never crashes. Every code path returns one of the above.
 | `from __future__ import annotations` added | Union type syntax `X \| Y` is not valid at runtime in Python < 3.10 without this. Added to 5 files. |
 | `requirements.txt` corrected | Was pinned to `qiskit-aer==0.14.2` (incompatible with qiskit 2.x). Corrected to `>=0.15.0`. |
 | `.env.example` completed | Was missing all adapter-layer config keys. Now includes every key read by `config.py`. |
+| `Receiver` seen-set capped at 100,000 | Prevents unbounded memory growth in long-running gateway. |
+| `ReplayEnforcer` eviction threshold | Cache eviction fires above 10,000 entries to prevent OOM in long-running processes. |
 
 ### Known Limitations
 
@@ -234,7 +290,9 @@ The system never crashes. Every code path returns one of the above.
 | Replay registry in-memory | Replay protection breaks across restarts and multi-instance deployments | Use Redis or a DB for production multi-instance |
 | TraceStore in-memory | Traces lost on restart; capped at 10,000 entries | Export to OpenTelemetry for distributed deployments |
 | Quantum simulation synchronous | High request volumes will queue | Acceptable for current prototype scale |
-| No cryptographic lineage signatures | Lineage cannot be third-party verified | Add HMAC if non-repudiation is required |
+| IPC transport is multiprocessing.Queue | Not a network socket — unsuitable for distributed deployment as-is | Replace with ZeroMQ or gRPC |
+| NodeRegistry is ephemeral | No certificate rotation or revocation | Requires persistent storage for production |
+| issued_at is producer-reported wall-clock | Not a cryptographically signed timestamp | Add trusted time authority for strict TTL enforcement |
 
 ---
 
@@ -268,16 +326,37 @@ python determinism_proof.py
 # Expected: passed=true, mismatches=[], exit 0
 ```
 
+### Run the runtime participation proof
+```bash
+python participation_proof.py
+# Expected: VERDICT: PASSED — all 8 structural checks pass
+```
+
+### Run the cross-system communication simulation
+```bash
+python simulation.py
+# Expected: all 4 paths (Q→C, C→Q, H→C, H→Q) accepted
+```
+
 ### Run the full gateway demo
 ```bash
 python hybrid_gateway.py
 # Expected last event: "ack": "ACK:OK:NODE_READY"
 ```
 
+### Run the three-process pipeline
+```bash
+python process_runner.py
+# Crash simulation:
+python process_runner.py --crash producer
+python process_runner.py --crash execution
+python process_runner.py --crash consensus
+```
+
 ### Run all tests
 ```bash
 pytest tests/ -v
-# Expected: 122 passed
+# Expected: 213 passed
 ```
 
 ### (Optional) Configure
@@ -288,4 +367,4 @@ copy .env.example .env
 
 ---
 
-*This document is the non-technical companion to `REVIEW_PACKET.md` (technical) and `TESTING_PACKET.md` (evidence).*
+*This document is the non-technical companion to `PHASE3_REVIEW_PACKET.md` (technical) and `TEST_RESULTS.md` (evidence).*

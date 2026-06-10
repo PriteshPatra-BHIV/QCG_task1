@@ -10,6 +10,11 @@ OBSERVABILITY : timestamps — MAY differ between runs (wall-clock metadata).
 
 This proof uses DeterminismOracle.extract_deterministic_projection() to
 compare only deterministic fields, explicitly excluding timestamps.
+
+Phase 3 additions
+-----------------
+- Default runs raised to 20 (sprint requirement).
+- run_failure_injection_proof() proves detection of timestamp/ordering/payload mutation.
 """
 
 import logging
@@ -30,7 +35,7 @@ def run_determinism_proof(
     noise: float = 0.12,
     mode: str = "entangled",
     seed: int = config.DEFAULT_SEED,
-    runs: int = 5,
+    runs: int = 20,
 ) -> bool:
     log_event(log, logging.INFO, "determinism_proof_start", ctx={
         "msg_text": message, "noise": noise, "mode": mode, "seed": seed, "runs": runs
@@ -83,6 +88,76 @@ def run_determinism_proof(
     return all_match
 
 
+# ---------------------------------------------------------------------------
+# Failure Injection Proof
+# ---------------------------------------------------------------------------
+
+def run_failure_injection_proof() -> dict:
+    """
+    Prove that the determinism oracle detects three mutation types:
+      1. timestamp mutation   — observability field changes
+      2. ordering mutation    — payload keys reordered (JSON canonical form must normalise)
+      3. payload mutation     — deterministic field tampered
+
+    Returns a dict with detection results for each case.
+    """
+    from execution_contract import ComputationExecutionContract, _canonical_hash
+
+    oracle = DeterminismOracle()
+
+    request = TransmissionRequest("NODE_READY", 0.0, "entangled")
+    dist = run_quantum_producer(request, seed=config.DEFAULT_SEED)
+    contract = translate(dist, "NODE_READY")
+
+    # Base contract via adapter
+    from adapters import QuantumAdapter
+    adapter = QuantumAdapter()
+    base_contract, _ = adapter.adapt(dist, "NODE_READY")
+
+    results = {}
+
+    # --- 1. Timestamp mutation (observability field) ---
+    import dataclasses
+    mutated_ts = dataclasses.replace(base_contract, timestamp="1970-01-01T00:00:00+00:00")
+    verdict = oracle.assert_contract_determinism(base_contract, mutated_ts)
+    results["timestamp_mutation"] = {
+        "deterministic_match": verdict.deterministic_match,
+        "observability_diffs": bool(verdict.observability_diffs),
+        "detected": not verdict.deterministic_match or bool(verdict.observability_diffs),
+    }
+
+    # --- 2. Ordering mutation (payload dict key order should not affect hash) ---
+    original_payload = base_contract.payload
+    reversed_payload = dict(reversed(list(original_payload.items())))
+    hash_original = _canonical_hash(original_payload)
+    hash_reversed = _canonical_hash(reversed_payload)
+    results["ordering_mutation"] = {
+        "hash_unchanged": hash_original == hash_reversed,
+        "detected": hash_original != hash_reversed,
+        "note": "json.dumps sort_keys=True neutralises ordering — hash_unchanged expected",
+    }
+
+    # --- 3. Payload mutation (deterministic field tampered) ---
+    tampered_payload = {**original_payload, "__tamper__": True}
+    tampered_hash = _canonical_hash(tampered_payload)
+    results["payload_mutation"] = {
+        "hash_changed": tampered_hash != hash_original,
+        "detected": tampered_hash != hash_original,
+    }
+
+    log_event(log, logging.INFO, "failure_injection_proof", ctx=results)
+    return results
+
+
 if __name__ == "__main__":
+    print("=== DETERMINISM PROOF: 20 runs ===")
     passed = run_determinism_proof()
+    print(f"20-run determinism: {'PASS' if passed else 'FAIL'}")
+
+    print("\n=== FAILURE INJECTION PROOF ===")
+    fi = run_failure_injection_proof()
+    for case, detail in fi.items():
+        detected = detail.get("detected", False)
+        print(f"  {case}: {'DETECTED' if detected else 'NOT DETECTED'} — {detail}")
+
     raise SystemExit(0 if passed else 1)

@@ -24,7 +24,7 @@ The circuit runs 1,024 times through a simulated noisy channel.
 
 ---
 
-### Step 3 — Uncertainty Classification (NEW — doctrine layer)
+### Step 3 — Uncertainty Classification
 
 Before any contract is formed, the distribution is explicitly classified:
 
@@ -80,7 +80,7 @@ The pipeline is complete. The quantum layer stayed probabilistic. The classical 
 
 ---
 
-### The Full Picture
+### The Full Picture (Core Pipeline)
 
 ```
 You
@@ -104,6 +104,43 @@ ACK:DEGRADED:NODE_READY:confidence=0.6807
 
 ---
 
+## The Communication Layer Path (new)
+
+The system also supports a producer-agnostic communication path. Any producer type — QUANTUM, CLASSICAL, or HYBRID — enters as a `CommunicationRequest` and exits as a `CommunicationResponse`. The gateway does not branch on source type.
+
+```
+QuantumProducer / ClassicalProducer / HybridProducer
+ │
+ │  CommunicationRequest
+ │  { message_id, source_type, destination_type, payload, confidence }
+ ▼
+[CommunicationGateway.send()]
+ │  rate limit check
+ │  resolve_translation_status(confidence)  → OK / DEGRADED / REJECTED
+ ▼
+[TranslationContract]
+ │  payload_hash (SHA-256), confidence, uncertainty, translation_status
+ ▼
+[Receiver.receive()]
+ │  replay check (message_id registry, bounded at 100,000)
+ ▼
+[AcknowledgementContract]
+ │  transport_status: ACK:OK / ACK:DEGRADED:confidence=X / HALT:*
+ ▼
+[CommunicationResponse]
+ │  bundles TranslationContract + AcknowledgementContract
+ ▼
+Caller
+```
+
+All 4 cross-system paths use this identical flow:
+- Quantum → Classical
+- Classical → Quantum
+- Hybrid → Classical
+- Hybrid → Quantum
+
+---
+
 ### What Happens When Things Go Wrong
 
 | Situation | What Happens |
@@ -112,6 +149,8 @@ ACK:DEGRADED:NODE_READY:confidence=0.6807
 | Near-uniform distribution (confidence < 0.30) | `HALT:TRANSLATION_FAILURE` — classified as UNTRANSLATABLE first |
 | Message bits don't match original | `HALT:TRANSLATION_FAILURE` — REJECT |
 | Same trace_id sent twice | `HALT:REPLAY_DETECTED` |
+| Same message_id sent twice (comm layer) | `HALT:REPLAY_DETECTED` |
 | Too many requests per minute | `HALT:RATE_LIMIT_EXCEEDED` |
+| Confidence below rejection floor (comm layer) | `HALT:TRANSLATION_REJECTED:confidence=X` |
 
 The system **never crashes**. Every path returns a structured, observable string.

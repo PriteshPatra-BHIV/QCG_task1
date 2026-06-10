@@ -4,12 +4,19 @@ Emits JSON lines (production) or human-readable text (development).
 
 All caller-supplied context is passed as a single 'ctx' dict to avoid
 collisions with Python's reserved LogRecord attribute names.
+
+Log output
+----------
+- Always: stdout StreamHandler
+- If QCG_LOG_FILE is set: RotatingFileHandler (10 MB, 5 backups)
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
+import os
 import sys
 import threading
 from datetime import datetime, timezone
@@ -43,18 +50,27 @@ def get_logger(name: str) -> logging.Logger:
 
         level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
         logger.setLevel(level)
+        formatter = _JsonFormatter() if config.LOG_FORMAT == "json" else logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+        )
 
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setLevel(level)
+        # stdout handler
+        sh = logging.StreamHandler(sys.stdout)
+        sh.setLevel(level)
+        sh.setFormatter(formatter)
+        logger.addHandler(sh)
 
-        if config.LOG_FORMAT == "json":
-            handler.setFormatter(_JsonFormatter())
-        else:
-            handler.setFormatter(logging.Formatter(
-                "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
-            ))
+        # optional file handler
+        log_file = os.environ.get("QCG_LOG_FILE", "")
+        if log_file:
+            os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+            fh = logging.handlers.RotatingFileHandler(
+                log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+            )
+            fh.setLevel(level)
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
 
-        logger.addHandler(handler)
         logger.propagate = False
     return logger
 
