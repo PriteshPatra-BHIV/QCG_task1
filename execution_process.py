@@ -55,8 +55,10 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
 
         # Replay enforcement
         decision = enforcer.submit(raw["trace_id"], issued_at=issued_at_mono)
-        _log(pid, "EXECUTION", "replay_check", trace_id=raw["trace_id"],
-             status=decision.status, seq=decision.sequence_id)
+        _log(pid, "EXECUTION", "replay_check",
+             message_id=raw["trace_id"],
+             sequence_number=decision.sequence_id,
+             status=decision.status)
 
         if decision.status != "ACCEPTED":
             queue_out.put({
@@ -91,8 +93,11 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
             continue
 
         result = runtime.execute(contract)
-        _log(pid, "EXECUTION", "executed", trace_id=result.contract_trace_id,
-             ack=result.ack, runtime_hash=result.runtime_hash[:16])
+        _log(pid, "EXECUTION", "executed",
+             message_id=result.contract_trace_id,
+             sequence_number=decision.sequence_id,
+             status=result.ack,
+             runtime_hash=result.runtime_hash[:16])
 
         queue_out.put({
             "type": "EXECUTION_RESULT",
@@ -106,8 +111,16 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
 
 
 def _log(pid: int, role: str, event: str, **kwargs) -> None:
-    entry = {"pid": pid, "role": role, "event": event, **kwargs,
-             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    entry = {
+        "process_id":      pid,
+        "role":            role,
+        "event":           event,
+        "message_id":      kwargs.pop("message_id", ""),
+        "sequence_number": kwargs.pop("sequence_number", 0),
+        "status":          kwargs.pop("status", ""),
+        "timestamp":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **kwargs,
+    }
     line = json.dumps(entry)
     print(line, flush=True)
     _append_log("logs/process_2.log", line)

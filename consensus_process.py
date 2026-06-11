@@ -70,8 +70,8 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
 
         proof = engine.run_consensus(signed, pub_key)
         _log(pid, "CONSENSUS", "consensus_complete",
-             trace_id=signed.trace_id,
-             reached=proof.consensus_reached,
+             message_id=signed.trace_id,
+             status="REACHED" if proof.consensus_reached else "FAILED",
              agreement=f"{proof.agreement_percentage:.0%}")
 
         queue_out.put({"type": "CONSENSUS_PROOF", "proof": proof.to_dict()})
@@ -80,8 +80,16 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
 
 
 def _log(pid: int, role: str, event: str, **kwargs) -> None:
-    entry = {"pid": pid, "role": role, "event": event, **kwargs,
-             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    entry = {
+        "process_id":      pid,
+        "role":            role,
+        "event":           event,
+        "message_id":      kwargs.pop("message_id", ""),
+        "sequence_number": kwargs.pop("sequence_number", 0),
+        "status":          kwargs.pop("status", ""),
+        "timestamp":       time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **kwargs,
+    }
     line = json.dumps(entry)
     print(line, flush=True)
     _append_log("logs/process_3.log", line)

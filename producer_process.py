@@ -56,15 +56,25 @@ def run(queue_out, crash: bool = False) -> None:
         "issued_at": time.time(),
     }
     queue_out.put(msg)
-    _log(pid, "PRODUCER", "contract sent", trace_id=contract.trace_id)
+    _log(pid, "PRODUCER", "contract_sent",
+         message_id=contract.trace_id,
+         status="SENT")
 
     queue_out.put({"type": "DONE"})
     _log(pid, "PRODUCER", "finished")
 
 
 def _log(pid: int, role: str, event: str, **kwargs) -> None:
-    entry = {"pid": pid, "role": role, "event": event, **kwargs,
-             "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    entry = {
+        "process_id":     pid,
+        "role":           role,
+        "event":          event,
+        "message_id":     kwargs.pop("message_id", ""),
+        "sequence_number": kwargs.pop("sequence_number", 0),
+        "status":         kwargs.pop("status", ""),
+        "timestamp":      time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **kwargs,
+    }
     line = json.dumps(entry)
     print(line, flush=True)
     _append_log("logs/process_1.log", line)
