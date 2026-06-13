@@ -171,7 +171,8 @@ class Receiver:
     """
 
     def __init__(self, max_seen: int = _MAX_SEEN):
-        self._seen: set[str] = set()
+        # dict preserves insertion order (Python 3.7+); values unused — FIFO eviction
+        self._seen: dict[str, None] = {}
         self._lock = threading.Lock()
         self._max_seen = max_seen
 
@@ -186,12 +187,11 @@ class Receiver:
                     trace_reference=translation_contract.trace_reference,
                 )
             if len(self._seen) >= self._max_seen:
-                # Evict oldest 10% to keep memory bounded (FIFO approximation)
+                # True FIFO eviction: dict preserves insertion order
                 evict_count = max(1, self._max_seen // 10)
-                evict = list(self._seen)[:evict_count]
-                for mid in evict:
-                    self._seen.discard(mid)
-            self._seen.add(translation_contract.message_id)
+                for mid in list(self._seen.keys())[:evict_count]:
+                    del self._seen[mid]
+            self._seen[translation_contract.message_id] = None
 
         transport_status = resolve_transport_status(
             translation_contract.translation_status,

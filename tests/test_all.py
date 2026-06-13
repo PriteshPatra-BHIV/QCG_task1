@@ -4,6 +4,8 @@ Full pytest suite for the Hybrid Quantum Communication Gateway.
 Covers all 6 layers: producer, translation, gateway, failure modes, determinism.
 """
 
+import json
+import threading
 import pytest
 
 from models import TransmissionRequest, QuantumDistribution, ClassicalContract

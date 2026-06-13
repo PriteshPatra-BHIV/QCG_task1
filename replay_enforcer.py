@@ -108,6 +108,11 @@ class ReplayEnforcer:
         ]
         for aid in expired:
             del self._cache[aid]
+        # If nothing expired but cache is still at threshold, evict oldest by issued_at
+        if len(self._cache) >= _EVICTION_THRESHOLD:
+            oldest = sorted(self._cache.items(), key=lambda kv: kv[1][1])
+            for aid, _ in oldest[:max(1, _EVICTION_THRESHOLD // 10)]:
+                del self._cache[aid]
 
     def reset(self) -> None:
         """Clear cache and reset sequence counter (for testing)."""

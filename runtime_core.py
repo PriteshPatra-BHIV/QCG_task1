@@ -118,12 +118,18 @@ class RuntimeCore:
             return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}")
 
         # Step 2 — replay guard (producer-agnostic)
+        # Replay registry: cap at 100,000 trace_ids to prevent unbounded growth.
+        # Under sustained load, oldest entries are evicted first.
+        _REPLAY_REGISTRY_MAX = 100_000
         with self._registry_lock:
             if contract.trace_id in self._replay_registry:
                 log_event(log, logging.WARNING, "runtime_replay_detected", ctx={
                     "trace_id": contract.trace_id,
                 })
                 return self._halt(contract, "HALT:REPLAY_DETECTED")
+            if len(self._replay_registry) >= _REPLAY_REGISTRY_MAX:
+                # Evict one arbitrary entry to stay bounded
+                self._replay_registry.pop(next(iter(self._replay_registry)))
             self._replay_registry[contract.trace_id] = contract.payload_hash
 
         # Step 3 — confidence thresholds (producer-agnostic)

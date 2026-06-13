@@ -34,10 +34,10 @@ from pathlib import Path
 
 import config
 
-DEFAULT_REGISTRY_PATH = Path("replay_registry.json")
+DEFAULT_REGISTRY_PATH = Path(config.REPLAY_REGISTRY_PATH)
 DEFAULT_TTL_SECONDS: float = config.REPLAY_TTL_SECONDS
 # Max sequence gap before a message is classified as FUTURE
-MAX_SEQUENCE_GAP: int = 1000
+MAX_SEQUENCE_GAP: int = config.REPLAY_MAX_SEQUENCE_GAP
 
 
 @dataclass(frozen=True)
@@ -203,11 +203,14 @@ class ReplayRegistry:
         if not self._path.exists():
             return
         try:
-            data = json.loads(self._path.read_text())
+            text = self._path.read_text().strip()
+            if not text:
+                return
+            data = json.loads(text)
             self._sequence_counter = data.get("sequence_counter", 0)
             for mid, entry_data in data.get("entries", {}).items():
                 self._entries[mid] = _RegistryEntry(**entry_data)
-        except (json.JSONDecodeError, KeyError, TypeError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             # Corrupted file — start fresh
             self._entries.clear()
             self._sequence_counter = 0

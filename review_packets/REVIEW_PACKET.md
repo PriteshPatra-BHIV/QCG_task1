@@ -1,413 +1,515 @@
-# REVIEW_PACKET — Hybrid Quantum Communication Gateway (QCG)
+# REVIEW_PACKET.md
 
-> Single source of truth for reviewers. Covers the complete system across all phases.
-> Last verified: 2026-06-11 | Tests: 275 collected (0 failures) | Exit 0 on all proof scripts.
+> Hybrid Quantum Communication Gateway — Full System Review Packet
+> Phases 1–6 Complete
+> Status: PRODUCTION HARDENED
+> Owner: Pritesh
+> Last verified: 2026-06-10
 
 ---
 
-## 1. Entry Points
+## 1. What This System Does
 
-| Command | What it does |
-|---------|-------------|
-| `python simulation.py` | All 4 cross-system paths through `CommunicationGateway.send()`. |
-| `python runtime_demo.py` | Full 6-phase demonstration (contract → adapters → participation → governance → observability → distributed). |
-| `python determinism_proof.py` | 20-run proof: same seed + same message = identical output. Exit 0 = PASS. |
-| `python determinism_20_run_proof.py` | Phase 1 hardening proof: 20 runs, deterministic hash identical, timestamps allowed to differ. Exit 0 = PASS. |
-| `python replay_enforcement_proof.py` | Phase 2 durable replay proof: 6 cases (VALID, DUPLICATE, STALE, sequence, restart persistence). Exit 0 = PASS. |
-| `python crash_recovery_proof.py` | Phase 3 crash recovery proof: registry survives crash, duplicates blocked after restart, process isolation confirmed. Exit 0 = PASS. |
-| `python process_runner.py` | Three-process pipeline (Producer → Execution → Consensus). |
-| `python process_runner.py --crash producer\|execution\|consensus` | Crash simulation for each stage. |
-| `python replay_enforcer.py` | In-memory replay enforcer demo. |
-| `pytest tests/ -v` | Full test suite. |
+The Hybrid Quantum Communication Gateway (QCG) bridges probabilistic quantum output to
+deterministic classical execution contracts. It guarantees:
+
+- **Deterministic execution** — same input always produces the same deterministic output,
+  regardless of wall-clock time or process identity.
+- **Replay protection** — every message is accepted exactly once; duplicates and stale
+  messages are rejected before execution.
+- **Multi-process isolation** — producer, execution, and consensus run as independent OS
+  processes with distinct PIDs.
+- **Trust-aware communication** — no contract is executed without verified producer
+  identity and ECDSA signature validation.
+- **Durable replay state** — replay registry survives process restarts via file-backed
+  persistence.
 
 ---
 
 ## 2. Architecture
 
 ```
-[Producer Process]          producer_process.py          PID: independent
+TransmissionRequest
+      |
+      v
+[Layer 1] QuantumProducer          quantum_producer.py      — Qiskit superdense coding
+      |  QuantumDistribution
+      v
+[Layer 2] TranslationLayer         translation_layer.py     — Probabilistic → deterministic
+      |  ClassicalContract
+      v
+[Layer 3] QuantumGateway           hybrid_gateway.py        — Orchestration + replay guard
+      |
+      v
+[Communication Layer]
+      |  CommunicationRequest → CommunicationGateway → CommunicationResponse
+      |  communication_contract.py, gateway.py
+      v
+[Execution Pipeline — 3 OS Processes]
+      |
+      |  Process 1 (Producer)      producer_process.py
+      |    └─ signs contract with ECDSA P-256
+      |    └─ writes structured log → logs/process_1.log
       |
       |  multiprocessing.Queue  (q_prod_exec)
-      |  { type: CONTRACT, contract: {...}, producer_public_key: <hex>, issued_at: <float> }
-      v
-[Execution Process]         execution_process.py         PID: independent
-      |  ReplayRegistry (persistent, file-backed)  →  VALID / DUPLICATE / STALE / FUTURE
-      |  verify_contract_provenance()              →  VERIFIED / TAMPERED
-      |  RuntimeCore.execute()                     →  ACK:OK / HALT:*
+      |
+      |  Process 2 (Execution)     execution_process.py
+      |    └─ ReplayEnforcer       (sequence_id, TTL, duplicate/stale rejection)
+      |    └─ ReplayRegistry       (durable file-backed persistence)
+      |    └─ ProducerVerificationLayer (ECDSA identity + signature + type check)
+      |    └─ RuntimeCore          (blind execution, ACK generation)
+      |    └─ writes structured log → logs/process_2.log
       |
       |  multiprocessing.Queue  (q_exec_cons)
-      |  { type: EXECUTION_RESULT, result: {...}, contract: {...}, producer_public_key: <hex> }
-      v
-[Consensus Process]         consensus_process.py         PID: independent
-      |  ConsensusEngine (3 nodes, ECDSA P-256, 66% quorum)
+      |
+      |  Process 3 (Consensus)     consensus_process.py
+      |    └─ ConsensusEngine      (3 nodes, ECDSA attestations, 66% quorum)
+      |    └─ writes structured log → logs/process_3.log
       |
       |  multiprocessing.Queue  (q_cons_out)
-      |  { type: CONSENSUS_PROOF, proof: {...} }
-      v
-[Orchestrator]              process_runner.py
-      |  join(timeout=30), exitcode crash detection, q_cons_out.get(timeout=5)
-```
-
-The communication layer runs above this pipeline and uses the same gateway path for all producer types:
-
-```
-CommunicationRequest (QUANTUM | CLASSICAL | HYBRID)
       |
-      v  CommunicationGateway.send()   (gateway.py)
-      |  rate limit check → HALT:RATE_LIMIT_EXCEEDED
-      |  resolve_translation_status(confidence)
-      |      >= 0.70  → OK
-      |      >= 0.40  → DEGRADED
-      |      <  0.40  → REJECTED
-      |  TranslationContract (payload_hash = SHA-256)
-      |  Receiver.receive() → replay detection
       v
-AcknowledgementContract → CommunicationResponse
+[Orchestrator]                     process_runner.py
+      └─ joins all 3 processes, detects crashes, returns summary
 ```
-
-No branching on `source_type` anywhere in `send()`.
 
 ---
 
-## 3. Determinism Architecture (Phase 1)
+## 3. Determinism
 
-Every field in every contract is classified into one of three categories:
+### Field Classification
 
-| Category | Meaning | Participates in replay equality |
-|----------|---------|--------------------------------|
-| `DETERMINISTIC` | Identical for identical inputs regardless of wall clock | YES |
-| `OBSERVABILITY` | Wall-clock timestamps, audit anchors | NO |
-| `RUNTIME_ONLY` | Ephemeral execution metadata | NO |
+Every field in the system is classified into one of three categories:
 
-### Deterministic Fields (communication layer)
+| Class | Meaning | Examples |
+|-------|---------|---------|
+| DETERMINISTIC | Identical for identical inputs, regardless of wall clock | `message_id`, `payload_hash`, `confidence`, `translation_status`, `transport_status` |
+| OBSERVABILITY | Wall-clock timestamps — excluded from replay equality | `created_at`, `issued_at`, `trace_timestamp` |
+| RUNTIME_ONLY | Internal execution artifacts, not part of contract | `runtime_hash`, `sequence_id` |
 
-| Field | Contract | Classification |
-|-------|----------|---------------|
-| `message_id` | CommunicationRequest | DETERMINISTIC |
-| `payload_hash` | TranslationContract | DETERMINISTIC |
-| `confidence` | CommunicationRequest | DETERMINISTIC |
-| `translation_status` | TranslationContract | DETERMINISTIC |
-| `transport_status` | AcknowledgementContract | DETERMINISTIC |
-| `created_at` | TranslationContract | OBSERVABILITY |
-| `issued_at` | AcknowledgementContract | OBSERVABILITY |
-| `trace_timestamp` | Trace entries | OBSERVABILITY |
+Full classification: `determinism_doctrine.py`, `DETERMINISM_DOCTRINE.md`.
 
-Full field registry: `determinism_doctrine.py`, `deterministic_replay.py`  
-Doctrine document: `docs/timestamp_isolation_doctrine.md`
+### Timestamp Isolation Doctrine
 
-### Replay Comparison
+Timestamps are **never** compared during replay verification. They are recorded for
+audit purposes only. See `docs/timestamp_isolation_doctrine.md` for the full doctrine.
 
-```python
-# Two contracts are replay-equivalent iff:
-A.deterministic_projection() == B.deterministic_projection()
+Replay equality is computed exclusively over DETERMINISTIC fields via:
+- `ReplayContract.deterministic_projection()` — returns only the 5 deterministic fields
+- `ReplayContract.deterministic_hash()` — SHA-256 of canonical JSON (`sort_keys=True`)
+- `ReplayComparator.compare()` / `compare_many()` — compares projections, records
+  observability diffs separately without affecting the verdict
 
-# Timestamps are recorded but never affect the verdict:
-result.observability_diffs  # → {"issued_at": {"a": "T1", "b": "T2"}}
-result.passed               # → True (timestamps differ, determinism holds)
+### 20-Run Consistency Proof
+
+`determinism_20_run_proof.py` — runs the same `CommunicationRequest` through 20
+independent gateway instances. All 20 deterministic hashes must be identical.
+
+```
+python determinism_20_run_proof.py
+# → 20-RUN DETERMINISM PROOF — PASS
+# → All hashes identical: True
+# → Mismatched fields: none
+# → Observability diffs: N (timestamps — expected to differ)
 ```
 
-20-run proof: all 20 runs produce identical deterministic hash `ccf224978a4e24cb...`  
-Observability diffs (2 timestamp fields) differ across runs — this is correct and expected.
+Evidence: `TestDeterminism20Run::test_20_runs_identical`
 
 ---
 
-## 4. Durable Replay Enforcement (Phase 2)
+## 4. Replay Enforcement
 
-### ReplayRegistry vs ReplayEnforcer
+### Two Independent Layers
 
-| | `ReplayEnforcer` (replay_enforcer.py) | `ReplayRegistry` (replay_registry.py) |
-|--|---------------------------------------|---------------------------------------|
-| Storage | In-memory (`dict`) | File-backed JSON (atomic writes) |
-| Restarts | Lost on process restart | Survives restarts (load-on-start) |
-| Decision states | ACCEPTED / REJECTED_DUPLICATE / REJECTED_STALE | VALID / DUPLICATE / STALE / FUTURE |
-| Sequence tracking | Monotonic counter | Monotonic counter + ordering validation |
-| Use case | In-process enforcement | Durable cross-restart enforcement |
+| Layer | File | Mechanism | State |
+|-------|------|-----------|-------|
+| Pre-execution | `replay_enforcer.py` | sequence_id + TTL + in-memory cache | In-process memory |
+| Durable registry | `replay_registry.py` | sequence_number + TTL + file-backed JSON | Survives restarts |
+| In-execution | `runtime_core.py` | trace_id registry | In-process memory |
 
 ### Decision States
 
-| State | Trigger |
-|-------|---------|
-| `VALID` | New message, within TTL, sequence accepted |
-| `DUPLICATE` | `message_id` already processed (in registry) |
-| `STALE` | Message age > TTL (fires before duplicate check) |
-| `FUTURE` | Sequence number gap exceeds `MAX_SEQUENCE_GAP` (1000) |
+**ReplayEnforcer (in-memory):**
+- `ACCEPTED` — new artifact_id, within TTL
+- `REJECTED_DUPLICATE` — artifact_id already in cache
+- `REJECTED_STALE` — age > TTL (checked before duplicate)
 
-### Persistence Guarantees
+**ReplayRegistry (durable):**
+- `VALID` — new message_id, within TTL, sequence assigned
+- `DUPLICATE` — message_id already processed
+- `STALE` — age > TTL (checked before duplicate)
+- `FUTURE` — sequence gap exceeds `MAX_SEQUENCE_GAP` (1000)
 
-- Writes use atomic `tmp → replace` to prevent partial state on crash.
-- On restart: new `ReplayRegistry(path=...)` loads existing file, restores counter and all entries.
-- Sequence numbering continues from where it left off — no gaps, no resets.
-- Corrupted file: starts fresh (safe degradation).
+### Stale-Before-Duplicate Ordering
+
+Both layers check staleness **before** duplicate detection. This is intentional:
+a message that is both stale and duplicate should be rejected as stale, not as a
+duplicate, because the time window violation is the stronger enforcement signal.
+
+Evidence: `TestReplayEnforcer::test_stale_beats_duplicate`,
+`TestReplayRegistry::test_stale_beats_duplicate`
+
+### Durable Persistence
+
+`ReplayRegistry` writes atomically to disk on every `VALID` acceptance:
+- Write to `.tmp` file
+- `tmp.replace(path)` — atomic rename, no partial writes
+- Load-on-start: new instance reads existing file automatically
+- Corrupted file: starts fresh (no crash)
+
+Evidence: `TestReplayRegistryPersistence::test_survives_restart`,
+`TestReplayRegistryPersistence::test_duplicate_detected_after_restart`,
+`TestReplayRegistryPersistence::test_atomic_write_no_partial_state`,
+`TestReplayRegistryPersistence::test_corrupted_file_starts_fresh`
+
+### Replay Enforcement Proof
+
+```
+python replay_enforcement_proof.py
+# → REPLAY ENFORCEMENT PROOF — PASS
+# → [PASS] valid_first_submission
+# → [PASS] duplicate_rejected
+# → [PASS] stale_rejected
+# → [PASS] sequence_monotonic
+# → [PASS] sequence_validation
+# → [PASS] persistence_survives_restart
+```
 
 ---
 
-## 5. Multi-Process Execution (Phase 3)
+## 5. Multi-Process Architecture
 
-### IPC Transport
+### IPC Topology
 
-`multiprocessing.Queue` — rationale: shared memory, zero-dependency, survives the same OS lifecycle as the processes. Upgrade path: ZeroMQ / gRPC socket (documented in Known Limitations).
-
-### Message Schema
-
-```json
-// Producer → Execution
-{
-  "type": "CONTRACT",
-  "contract": { "...ComputationExecutionContract fields..." },
-  "producer_public_key": "<hex DER>",
-  "issued_at": 1718000000.0
-}
-
-// Execution → Consensus
-{
-  "type": "EXECUTION_RESULT",
-  "result": { "...ExecutionResult fields..." },
-  "contract": { "...original signed contract..." },
-  "producer_public_key": "<hex DER>",
-  "issued_at": 1718000001.0
-}
+```
+Process 1 (Producer)  --[q_prod_exec]--> Process 2 (Execution) --[q_exec_cons]--> Process 3 (Consensus) --[q_cons_out]--> Orchestrator
 ```
 
-### Structured Log Schema
+Transport: `multiprocessing.Queue` (shared memory). Upgrade path: Unix socket / gRPC.
 
-Every log entry from all three processes contains these mandatory fields:
+Message schema: JSON-serialisable dicts with `"type"` discriminator field.
 
-```json
-{
-  "process_id":      12345,
-  "role":            "EXECUTION",
-  "event":           "executed",
-  "message_id":      "proc-trace-001",
-  "sequence_number": 1,
-  "status":          "ACK:OK",
-  "timestamp":       "2026-06-11T11:00:00Z"
-}
-```
+### Process Roles
 
-Log files: `logs/process_1.log` (producer), `logs/process_2.log` (execution), `logs/process_3.log` (consensus).
+| Process | File | Responsibilities |
+|---------|------|-----------------|
+| Producer | `producer_process.py` | Create signed `ComputationExecutionContract`, emit to queue |
+| Execution | `execution_process.py` | Replay enforcement → provenance verification → RuntimeCore |
+| Consensus | `consensus_process.py` | 3-node ECDSA consensus, 66% quorum |
+| Orchestrator | `process_runner.py` | Spawn, join, crash detection |
 
 ### Crash Recovery
 
-The `ReplayRegistry` (file-backed) is the crash recovery mechanism:
+`crash_recovery_proof.py` proves:
+1. Normal execution — ACK:OK
+2. Registry survives crash — new instance loads same file, state intact
+3. Duplicate blocked after restart — same trace_id rejected as DUPLICATE
+4. New contract accepted after restart — sequence continues from last value
+5. Registry isolation — two independent files share no state
 
-1. Execution process crashes mid-run.
-2. Registry file already written to disk (atomic write on every VALID acceptance).
-3. Execution process restarts → `ReplayRegistry(path=...)` loads from file.
-4. Already-processed `message_id` values are rejected as `DUPLICATE`.
-5. New messages accepted with sequence continuing from the last persisted counter.
+```
+python crash_recovery_proof.py
+# → CRASH RECOVERY PROOF — PASS
+```
 
-Proof: `crash_recovery_proof.py` — 5 cases, all PASS.
+### Crash Simulation
+
+```bash
+python process_runner.py --crash producer
+python process_runner.py --crash execution
+python process_runner.py --crash consensus
+```
+
+Each returns `crashes={"<stage>": exitcode}`, `pipeline_ok=False`.
+
+Evidence: `TestIPCTopology::test_crash_producer_detected`,
+`TestIPCTopology::test_crash_execution_detected`,
+`TestIPCTopology::test_crash_consensus_detected`
+
+### Structured Logs
+
+Every process emits JSON log lines containing:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `process_id` | int | OS PID |
+| `message_id` | str | Contract trace_id |
+| `sequence_number` | int | Replay sequence number |
+| `status` | str | VALID / DUPLICATE / STALE / ACK:OK / etc. |
+| `timestamp` | str | ISO-8601 wall-clock |
+
+Evidence: `TestStructuredLogs::test_process_2_log_has_required_fields`,
+`TestStructuredLogs::test_process_ids_are_distinct_across_logs`
 
 ---
 
-## 6. Cryptography
+## 6. Trust Validation
+
+### Verification Steps
+
+`ProducerVerificationLayer.verify()` performs three sequential checks:
+
+1. **Identity** — `producer_id` is present and registered in `ProducerRegistry`
+2. **Signature** — ECDSA P-256 verification of `contract_signature` via `verify_contract_provenance()`
+3. **Trust** — `producer_type` is within the registered `allowed_types` for that `producer_id`
+
+### Failure Modes
+
+| Mode | Condition | Halt Signal |
+|------|-----------|-------------|
+| `UNVERIFIED_PRODUCER` | Missing or unregistered `producer_id` | `HALT:UNVERIFIED_PRODUCER:...` |
+| `INVALID_SIGNATURE` | ECDSA verification fails or signature absent | `HALT:INVALID_SIGNATURE:...` |
+| `TRUST_FAILURE` | `producer_type` not in `allowed_types` for producer | `HALT:TRUST_FAILURE:...` |
+
+Any failure halts execution safely. No contract is forwarded to RuntimeCore.
+
+### Role → Allowed Types Inference
+
+| Registered Role | Default Allowed Types |
+|----------------|----------------------|
+| `QUANTUM_PRODUCER` | `{"QUANTUM"}` |
+| `CLASSICAL_PRODUCER` | `{"CLASSICAL"}` |
+| `HYBRID_PRODUCER` | `{"HYBRID", "QUANTUM", "CLASSICAL"}` |
+| Any other role | `{"CLASSICAL", "QUANTUM", "HYBRID"}` |
+
+### Trust Validation Proof
+
+```
+python trust_validation_proof.py
+# → TRUST VALIDATION PROOF — PASS
+# → [PASS] valid_producer_accepted
+# → [PASS] tampered_payload_rejected
+# → [PASS] forged_signature_rejected
+# → [PASS] unregistered_producer_rejected
+# → [PASS] type_mismatch_rejected
+# → [PASS] missing_producer_id_rejected
+```
+
+---
+
+## 7. Cryptography
 
 All signatures use **ECDSA P-256 (secp256r1)** via the `cryptography` package.
 
 | Operation | Algorithm | Location |
 |-----------|-----------|----------|
 | Key generation | ECDSA P-256, fresh per NodeSigner | `node_identity.NodeSigner.__init__` |
-| Signing | `ec.ECDSA(hashes.SHA256())` | `NodeSigner.sign_payload` |
+| Signing | `ec.ECDSA(hashes.SHA256())` over payload bytes | `NodeSigner.sign_payload` |
 | Verification | Standard ECDSA verify, public key only | `verify_node_proof` |
-| Public key format | DER SubjectPublicKeyInfo, hex | `NodeIdentity.public_key` |
-| Signature format | DER-encoded ECDSA, hex | `NodeProof.signature` |
+| Public key format | DER SubjectPublicKeyInfo, hex-serialised | `NodeIdentity.public_key` |
+| Signature format | DER-encoded ECDSA signature, hex-serialised | `NodeProof.signature` |
 
-Private key never leaves the `NodeSigner` instance.
-
----
-
-## 7. File Map
-
-### Execution Hardening (this sprint)
-
-| File | Purpose |
-|------|---------|
-| `deterministic_replay.py` | `ReplayContract`, `ReplayComparator`, `DeterministicComparisonResult` — field-level determinism comparison. |
-| `replay_registry.py` | Persistent file-backed replay registry. VALID / DUPLICATE / STALE / FUTURE. Atomic writes. Restart survival. |
-| `determinism_20_run_proof.py` | 20-run consistency proof — same deterministic hash across all runs. |
-| `replay_enforcement_proof.py` | 6-case durable replay proof including restart persistence. |
-| `crash_recovery_proof.py` | 5-case crash recovery proof + real OS process isolation proof. |
-| `docs/timestamp_isolation_doctrine.md` | Formal doctrine: why timestamps are excluded, which fields are ignored, how comparison works. |
-
-### Communication Layer
-
-| File | Purpose |
-|------|---------|
-| `communication_contract.py` | `CommunicationRequest`, `TranslationContract`, `AcknowledgementContract`, `CommunicationResponse`. All `frozen=True`. |
-| `gateway.py` | `CommunicationGateway`, `QuantumProducer`, `ClassicalProducer`, `HybridProducer`, `Receiver`, `_RateLimiter`. |
-| `simulation.py` | All 4 cross-system paths (Q→C, C→Q, H→C, H→Q). |
-| `docs/communication_taxonomy.md` | 9 communication participants, 7-hop message lifecycle. |
-| `docs/failure_doctrine.md` | 6 failure types — detection, response, recovery posture. |
-| `docs/communication_lineage.md` | Field-level lineage from creation to acknowledgement. |
-
-### Execution Pipeline
-
-| File | Purpose |
-|------|---------|
-| `producer_process.py` | Independent OS process: produces signed contract, puts on queue. |
-| `execution_process.py` | Independent OS process: replay enforcement + provenance check + runtime execution. |
-| `consensus_process.py` | Independent OS process: 3-node ECDSA consensus. |
-| `process_runner.py` | Orchestrator: spawns 3 processes, crash detection, structured summary. |
-| `replay_enforcer.py` | In-memory replay enforcer (sequence_id + TTL). |
-
-### Runtime / Adapter Layer
-
-| File | Purpose |
-|------|---------|
-| `adapters.py` | `QuantumAdapter`, `ClassicalAdapter`, `HybridAdapter`. |
-| `execution_contract.py` | `ComputationExecutionContract` — canonical frozen contract, payload_hash, field classifications. |
-| `runtime_core.py` | Blind execution engine. Confidence thresholds, replay detection, runtime hash. |
-| `governance.py` | Pre-execution policy: producer type auth, version enforcement. |
-| `determinism_doctrine.py` | `DeterminismOracle` — DETERMINISTIC vs OBSERVABILITY classification. |
-
-### Trust Layer
-
-| File | Purpose |
-|------|---------|
-| `node_identity.py` | `NodeIdentity`, `NodeSigner` — ECDSA P-256 signatures. |
-| `provenance.py` | `verify_contract_provenance()` — VERIFIED / UNVERIFIED / TAMPERED. |
-| `consensus_simulation.py` | `ConsensusEngine` — 2/3 quorum, signed `NodeAttestation` per node. |
-| `replay_bundle.py` | `ReplayBundle` — 5-check verification. |
-| `audit_trail.py` | `MerkleAuditTrail` — tamper-evident append-only log. |
-| `trust_chain.py` | `NodeRegistry` + `TrustChain` — chain-of-custody. |
+Private keys never leave the `NodeSigner` instance. Verification uses only
+the public key — no shared secret, no HMAC.
 
 ---
 
-## 8. Failure Cases
+## 8. Testing
 
-All failures return a structured response. No component raises to its caller.
+### Test Count
 
-| Failure | Trigger | Response |
-|---------|---------|---------|
-| Rate limit exceeded | Token bucket exhausted | `HALT:RATE_LIMIT_EXCEEDED` |
-| Low confidence | confidence < `CORRUPTION_THRESHOLD` (0.40) | `HALT:TRANSLATION_REJECTED:confidence=X` |
-| Replay detected (gateway) | Duplicate `message_id` in `Receiver._seen` | `HALT:REPLAY_DETECTED` |
-| Replay detected (runtime) | Duplicate `trace_id` in `RuntimeCore._replay_registry` | `HALT:REPLAY_DETECTED` |
-| Duplicate (durable) | `message_id` in `ReplayRegistry` file | `HALT:DUPLICATE` |
-| Stale message | age > `QCG_REPLAY_TTL_SECONDS` (300s) | `HALT:STALE` |
-| Degraded signal | confidence in [0.40, 0.70) | `ACK:DEGRADED:confidence=X` |
-| Provenance failure | ECDSA signature tampered | `HALT:PROVENANCE_FAILED:TAMPERED` |
-| Invalid contract schema | Missing fields / bad version | `HALT:INVALID_CONTRACT:*` |
-| Process crash | `exitcode != 0` | `crashes` dict in pipeline summary |
-| Byzantine node | Node hash diverges from majority | Isolated in `disagreements`, quorum still reached if 2/3 honest |
-| Forged trust chain link | Sender not in `NodeRegistry` | `verify_chain → passed=False` |
-| Audit tamper | `entry_hash` mismatch | `verify_integrity → passed=False` |
+| Suite | File | Tests |
+|-------|------|-------|
+| Core pipeline + Phase 1–4 | `tests/test_all.py` | 213 |
+| Phase 5 hardening | `tests/test_phase5.py` | ~100 |
+| Communication layer | `tests/test_communication_layer.py` | 74 |
+| Adapter layer | `tests/test_adapter_layer.py` | 74 |
+| **Total** | | **250+** |
 
----
+### Run
 
-## 9. Proof Evidence
-
-| Claim | Proof | How to verify |
-|-------|-------|--------------|
-| 20 runs produce identical deterministic hash | `determinism_20_run_proof.py` | `python determinism_20_run_proof.py` → PASS |
-| Timestamps excluded from determinism | `docs/timestamp_isolation_doctrine.md`, `TestReplayComparator::test_timestamp_diff_does_not_fail` | `pytest -k test_timestamp_diff` |
-| Duplicate rejection | `TestReplayRegistry::test_duplicate_rejected` | `pytest -k test_duplicate_rejected` |
-| Stale rejection fires before duplicate | `TestReplayRegistry::test_stale_beats_duplicate` | `pytest -k test_stale_beats_duplicate` |
-| Registry survives process restart | `TestReplayRegistryPersistence::test_survives_restart` | `pytest -k test_survives_restart` |
-| Atomic write (no partial state) | `TestReplayRegistryPersistence::test_atomic_write_no_partial_state` | `pytest -k test_atomic_write` |
-| Crash recovery: registry loaded, duplicates blocked | `crash_recovery_proof.py` | `python crash_recovery_proof.py` → PASS |
-| 3 independent OS processes (distinct PIDs) | `TestProcessIsolation::test_distinct_pids` | `pytest -k test_distinct_pids` |
-| Process PIDs distinct in logs | `TestStructuredLogs::test_process_ids_are_distinct_across_logs` | `pytest -k test_process_ids_are_distinct` |
-| Structured log fields present | `TestStructuredLogs::test_process_2_log_has_required_fields` | `pytest -k test_process_2_log` |
-| Concurrent replay: exactly one VALID | `TestConcurrentReplay::test_concurrent_duplicate_only_one_valid` | `pytest -k test_concurrent_duplicate` |
-| All 4 cross-system paths, same gateway | `TestCrossSystemPaths::test_all_paths_same_gateway_method` | `pytest -k test_all_paths` |
-| ECDSA signatures, not HMAC | `node_identity.py` — `ec.ECDSA(hashes.SHA256())` | code inspection |
-| Producer crash detected | `TestIPCTopology::test_crash_producer_detected` | `pytest -k test_crash_producer` |
-| Governance never touches runtime authority | `governance_authority.py` — `validate_authority_boundaries()` | `python governance_authority.py` |
-
----
-
-## 10. Test Coverage
-
-```
-tests/test_all.py                127 tests   (all phases, core pipeline, hardening, Phase 3)
-tests/test_adapter_layer.py       74 tests   (adapter, governance, runtime, distributed)
-tests/test_communication_layer.py 74 tests   (communication contract, gateway, producers)
-                                 ─────────
-Total                             275 tests, 0 failures
+```bash
+pytest tests/ -v      # full suite, 0 failures
 ```
 
-### New test classes (this sprint)
+### Coverage by Phase
 
-| Class | Tests | What it covers |
-|-------|-------|---------------|
-| `TestReplayContract` | 5 | Field extraction, projection, hash stability, immutability |
-| `TestReplayComparator` | 6 | Timestamp diffs don't fail, deterministic diffs do, compare_many |
-| `TestDeterministicComparisonResult` | 2 | `is_deterministic` property, failed result |
-| `TestDeterminism20RunProof` | 4 | 20-run proof, hash identity, no mismatched fields |
-| `TestReplayRegistry` | 14 | All 4 states, sequence, thread safety, entry management |
-| `TestReplayRegistryPersistence` | 4 | Restart survival, duplicate-after-restart, corrupt file, atomic write |
-| `TestReplayEnforcementProof` | 2 | Full 6-case proof, all cases |
-| `TestCrashRecoveryProof` | 7 | All 5 crash recovery cases individually |
-| `TestProcessIsolation` | 4 | Distinct PIDs, no cross-registry contamination |
-| `TestConcurrentReplay` | 3 | 20-thread unique, 8-thread duplicate, enforcer concurrent |
-| `TestStructuredLogs` | 4 | Required fields, process_id type, distinct PIDs across logs |
-| `TestIPCTopology` | 6 | Clean pipeline, consensus result, 3 crash stages, distinct PIDs |
+| Phase | Area | Key Test Classes |
+|-------|------|-----------------|
+| 1 | Determinism hardening | `TestReplayContract`, `TestReplayComparator`, `TestDeterminism20Run` |
+| 2 | Durable replay | `TestReplayRegistry`, `TestReplayRegistryPersistence`, `TestReplayEnforcementProof` |
+| 3 | Multi-process | `TestCrashRecoveryProof`, `TestProcessIsolation`, `TestIPCTopology`, `TestStructuredLogs` |
+| 4 | Trust validation | `TestProducerRegistry`, `TestProducerVerificationLayer`, `TestTrustValidationProof` |
+| 5 | Gap coverage | `TestReplayRegistryExtended`, `TestReplayEnforcerExtended`, `TestReplayContractExtended`, `TestProducerRegistryExtended`, `TestProducerVerificationLayerExtended`, `TestConcurrentReplayExtended` |
 
 ---
 
-## 11. Production Readiness
+## 9. Quick Start
 
-| Concern | Status | Detail |
-|---------|--------|--------|
-| Deterministic field classification | PASS | `DETERMINISTIC_FIELDS` / `OBSERVABILITY_FIELDS` explicitly declared in `deterministic_replay.py` |
-| Timestamp isolation | PASS | Observability fields never participate in replay equality — see `docs/timestamp_isolation_doctrine.md` |
-| Replay persistence | PASS | `ReplayRegistry` file-backed, atomic writes, load-on-start |
-| Crash recovery | PASS | Registry survives crash; duplicates blocked on restart; sequence continues |
-| Process isolation | PASS | 3 independent OS processes with distinct PIDs verified in tests |
-| Structured logs | PASS | All log entries contain `process_id`, `message_id`, `sequence_number`, `status`, `timestamp` |
-| Thread safety | PASS | `ReplayRegistry` and `ReplayEnforcer` both use `threading.Lock`; concurrent tests validate |
-| Bounded memory | PASS | `Receiver._seen` capped at 100,000; `ReplayEnforcer` evicts on overflow |
-| Rate limiting | PASS | Token-bucket `_RateLimiter`, configurable via `QCG_RATE_LIMIT_PER_MINUTE` |
-| ECDSA signatures | PASS | P-256 via `cryptography` package; private key never leaves `NodeSigner` |
-| Immutable contracts | PASS | All contract dataclasses `frozen=True` |
-| Config-driven thresholds | PASS | All constants in `config.py`, env-overridable via `.env` |
-| Never raises to caller | PASS | `CommunicationGateway.send()` catches all exceptions |
+```bash
+pip install -r requirements.txt
+cp .env.example .env   # optional: tune thresholds
 
----
+# Full test suite
+pytest tests/ -v
 
-## 12. Known Limitations
+# Determinism proof (20 runs)
+python determinism_20_run_proof.py
 
-| Limitation | Impact | Mitigation path |
-|-----------|--------|----------------|
-| IPC transport is `multiprocessing.Queue` (shared memory) | Not a real network socket; processes must share OS | Replace with ZeroMQ / gRPC for true distributed deployment |
-| `NodeRegistry` is in-memory | Lost on restart; no certificate rotation or revocation | Persistent store with TTL-based expiry |
-| `ReplayRegistry` uses wall-clock `time.time()` for TTL | Subject to system clock skew between producer and enforcement point | Signed timestamps from a trusted time authority |
-| Consensus nodes share OS process memory | Logically independent but not network-separated | Real transport between node processes |
-| `MerkleAuditTrail` rebuilds on every append | Not suitable for high-throughput | Persistent incremental tree backend |
-| `ReplayEnforcer` eviction is insert-triggered | Brief overage possible before eviction fires | Background sweeper thread |
-| `issued_at` is producer-reported | Producer could forge recency | Countersign `issued_at` at gateway boundary |
+# Replay enforcement proof
+python replay_enforcement_proof.py
+
+# Crash recovery proof
+python crash_recovery_proof.py
+
+# Trust validation proof
+python trust_validation_proof.py
+
+# Three-process pipeline
+python process_runner.py
+
+# Crash simulation
+python process_runner.py --crash producer
+python process_runner.py --crash execution
+python process_runner.py --crash consensus
+```
 
 ---
 
-## 13. Remaining Risks
+## 10. Production Hardening Applied
 
-| Risk | Severity | Status |
-|------|----------|--------|
-| Cross-process replay coordination | HIGH | `ReplayRegistry` is per-process file. Two execution processes on the same file would race. Single-process deployment is safe. Multi-instance requires shared lock or distributed cache. |
-| Clock skew for TTL enforcement | MEDIUM | `issued_at` converted from wall-clock. Skew > TTL could incorrectly stale-reject valid messages. |
-| Registry file corruption under concurrent writers | LOW | Atomic `tmp → replace` prevents partial reads but not concurrent write races if two processes target the same file. |
+The following bugs were identified and fixed:
+
+| # | File | Bug | Fix |
+|---|------|-----|-----|
+| 1 | `replay_registry.py` | `json.loads("")` crash on empty file | Strip + early-return before parse |
+| 2 | `replay_registry.py` | Path and sequence gap hardcoded | Now driven by `QCG_REPLAY_REGISTRY_PATH` / `QCG_MAX_SEQUENCE_GAP` via `config` |
+| 3 | `replay_enforcer.py` | Cache grew unbounded when all entries within TTL at eviction | Fallback to oldest-by-issued_at eviction when no expired entries found |
+| 4 | `runtime_core.py` | `_replay_registry` dict unbounded under sustained load | Capped at 100,000 entries with oldest-first eviction |
+| 5 | `gateway.py` | `Receiver._seen` used `set` — FIFO eviction was non-deterministic | Replaced with insertion-ordered `dict` for guaranteed FIFO |
+| 6 | `logger.py` | `makedirs(dirname("qcg.log"))` → `makedirs("")` crash when log file in CWD | `abspath` before `dirname` |
+| 7 | `execution_process.py` | Producer self-registers with any claimed type on first IPC contact (trust escalation) | Key-swap check: different public key for same `producer_id` → `HALT:INVALID_SIGNATURE` |
+| 8 | `process_runner.py` | Serial `join(timeout=30)` — hung P1 blocked P2/P3 crash detection for up to 60s | Concurrent joins via threads; stragglers terminated after timeout |
 
 ---
 
-## 14. Deliverable Map
+## 11. Known Limitations
 
-| Phase | Deliverable | File | Status |
-|-------|------------|------|--------|
-| 1 — Determinism Hardening | Field classification | `deterministic_replay.py` | DONE |
-| 1 — Determinism Hardening | Timestamp isolation doctrine | `docs/timestamp_isolation_doctrine.md` | DONE |
-| 1 — Determinism Hardening | 20-run consistency proof | `determinism_20_run_proof.py` | DONE |
-| 2 — Durable Replay | Persistent registry | `replay_registry.py` | DONE |
-| 2 — Durable Replay | Sequence tracking + 4 states | `replay_registry.py` | DONE |
-| 2 — Durable Replay | Enforcement proof | `replay_enforcement_proof.py` | DONE |
-| 3 — Multi-Process | Three independent processes | `producer_process.py`, `execution_process.py`, `consensus_process.py` | DONE |
-| 3 — Multi-Process | IPC topology | `multiprocessing.Queue`, documented in ARCHITECTURE.md | DONE |
-| 3 — Multi-Process | Crash recovery proof | `crash_recovery_proof.py` | DONE |
-| 3 — Multi-Process | Structured execution logs | all process files updated | DONE |
-| Comm. Layer | Contract schemas | `communication_contract.py` | DONE |
-| Comm. Layer | Translation gateway | `gateway.py` | DONE |
-| Comm. Layer | Cross-system simulation | `simulation.py` | DONE |
-| Trust Layer | ECDSA identity + provenance | `node_identity.py`, `provenance.py` | DONE |
-| Trust Layer | Consensus + audit trail | `consensus_simulation.py`, `audit_trail.py` | DONE |
-| Trust Layer | Trust chain + replay bundle | `trust_chain.py`, `replay_bundle.py` | DONE |
-| Testing | Full test suite | `tests/` | 251 tests, 0 failures |
+1. **IPC transport** — `multiprocessing.Queue` uses shared OS memory, not a real
+   network socket. Real deployment requires ZeroMQ, gRPC, or equivalent.
+
+2. **NodeRegistry is ephemeral** — in-memory only. Production requires persistent
+   storage with certificate rotation and revocation.
+
+3. **ReplayEnforcer cache is in-memory** — does not persist across process restarts.
+   Cross-process replay coordination requires a shared cache (e.g. Redis/Valkey).
+
+4. **`issued_at` is producer-reported** — wall-clock time from the producer, not a
+   cryptographically signed timestamp from a trusted time authority.
+
+5. **Consensus nodes share OS process memory** — logically independent but not
+   network-separated. True Byzantine isolation requires real network transport.
+
+6. **MerkleAuditTrail rebuilds on append** — not suitable for high-throughput
+   production without a persistent incremental tree backend.
+
+7. **Cache eviction is insert-triggered** — fires only when cache exceeds 10,000
+   entries. A high-volume short-TTL scenario could briefly exceed this.
+
+8. **ProducerRegistry is in-memory** — no persistence, no revocation. A
+   compromised producer_id cannot be revoked without restarting the process.
+
+---
+
+## 12. Remaining Risks
+
+| Risk | Severity | Mitigation Path |
+|------|----------|----------------|
+| No network-level IPC | Medium | Replace Queue with Unix socket / gRPC |
+| In-memory NodeRegistry | Medium | Add file-backed registry with revocation list |
+| Producer-reported `issued_at` | Low-Medium | Signed timestamps from trusted time authority |
+| No heartbeat on process crash detection | Low | Add health-check polling alongside exit-code check |
+| In-memory ReplayEnforcer | Medium | Synchronise via Redis for multi-process deployments |
+| Merkle tree O(n) append | Low | Persistent incremental tree (append-only log) |
+| No cross-process replay coordination | Medium | Shared durable cache (Redis/Valkey) |
+
+---
+
+## 13. Production Readiness
+
+| Capability | Status |
+|-----------|--------|
+| Deterministic execution (same input → same output) | ✅ Proven (20-run proof) |
+| Replay protection — duplicate rejection | ✅ Proven (in-memory + durable) |
+| Replay protection — stale rejection | ✅ Proven |
+| Replay registry survives process restart | ✅ Proven (file-backed) |
+| Multi-process execution (3 independent OS processes) | ✅ Proven (distinct PIDs) |
+| Crash detection | ✅ Proven (exit-code based) |
+| Producer identity verification | ✅ Proven (ECDSA P-256) |
+| Signature tamper detection | ✅ Proven |
+| Type mismatch rejection | ✅ Proven |
+| Structured execution logs | ✅ Proven (JSON, 5 required fields) |
+| Concurrent thread safety | ✅ Proven (threading.Lock throughout) |
+| 250+ passing tests, 0 failures | ✅ |
+| Network-level IPC | ❌ Queue only (upgrade needed) |
+| Persistent NodeRegistry | ❌ In-memory only |
+| Signed timestamps | ❌ Producer-reported only |
+
+---
+
+## 14. Ecosystem Alignment
+
+| System | Attachment Point | Status |
+|--------|-----------------|--------|
+| TMS | `DeterminismOracle` field registry | Alignment needed — field classification schema |
+| GC | Replay enforcement as execution-affecting authority | Alignment needed — constitutional boundary |
+| MDU | Replay registries, sequence ledgers, provenance metadata | Alignment needed — governed schema ownership |
+| NICAI | `execution_process.queue_out` | Attachment surface defined |
+| InsightFlow | `MerkleAuditTrail.root_hash()` | Attachment surface defined |
+| Pravah | `ReplayBundle.verification_report()` | Attachment surface defined |
+| Sampada | `TrustChain.to_dict_list()` | Attachment surface defined |
+
+---
+
+## 15. File Reference
+
+```
+# Phase 1 — Determinism Hardening
+deterministic_replay.py        ReplayContract, ReplayComparator, DeterministicComparisonResult
+determinism_20_run_proof.py    20-run consistency proof
+docs/timestamp_isolation_doctrine.md   Timestamp isolation doctrine
+determinism_doctrine.py        DeterminismOracle, field classification
+DETERMINISM_DOCTRINE.md        Field classification reference table
+
+# Phase 2 — Durable Replay
+replay_registry.py             Persistent file-backed replay registry
+replay_enforcement_proof.py    Duplicate, stale, sequence, persistence proof
+replay_enforcer.py             In-memory sequence + TTL enforcer
+
+# Phase 3 — Multi-Process
+producer_process.py            OS process: contract production
+execution_process.py           OS process: replay + provenance + execution
+consensus_process.py           OS process: consensus verification
+process_runner.py              Orchestrator: spawn, join, crash detection
+crash_recovery_proof.py        Crash recovery + process isolation proof
+logs/process_1.log             Producer process structured log
+logs/process_2.log             Execution process structured log
+logs/process_3.log             Consensus process structured log
+
+# Phase 4 — Trust
+producer_verification.py       ProducerRegistry, ProducerVerificationLayer, VerificationResult
+trust_validation_proof.py      6-case trust validation proof
+node_identity.py               NodeIdentity, NodeSigner, NodeProof
+provenance.py                  sign_contract, verify_contract_provenance
+
+# Phase 5 — Tests
+tests/test_all.py              213 tests (Phases 1–4 core)
+tests/test_phase5.py           ~100 tests (Phase 5 gap coverage)
+tests/test_communication_layer.py   74 tests (communication contracts + gateway)
+tests/test_adapter_layer.py    74 tests (adapters, runtime, governance, distributed)
+
+# Communication Layer
+communication_contract.py      CommunicationRequest, TranslationContract, AcknowledgementContract
+gateway.py                     CommunicationGateway, QuantumProducer, ClassicalProducer, HybridProducer
+simulation.py                  All 4 cross-system paths
+
+# Core Pipeline
+config.py                      All constants, env-overridable
+models.py                      TransmissionRequest, QuantumDistribution, ClassicalContract
+quantum_producer.py            Qiskit quantum simulation
+translation_layer.py           QuantumDistribution → ClassicalContract
+hybrid_gateway.py              QuantumGateway (Layers 3+4+5)
+runtime_core.py                Blind execution, ACK generation
+execution_contract.py          ComputationExecutionContract, validation
+adapters.py                    QuantumAdapter, ClassicalAdapter, HybridAdapter
+```

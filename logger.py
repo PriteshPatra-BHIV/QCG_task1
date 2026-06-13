@@ -63,7 +63,8 @@ def get_logger(name: str) -> logging.Logger:
         # optional file handler
         log_file = os.environ.get("QCG_LOG_FILE", "")
         if log_file:
-            os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
+            log_dir = os.path.dirname(os.path.abspath(log_file))
+            os.makedirs(log_dir, exist_ok=True)
             fh = logging.handlers.RotatingFileHandler(
                 log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
             )

@@ -89,8 +89,26 @@ def run_pipeline(crash_stage: str | None = None) -> dict:
     print(json.dumps({"event": "processes_started", "pids": pids,
                       "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}))
 
-    for p in (p1, p2, p3):
-        p.join(timeout=30)
+    # Join all three processes concurrently so a hung process in one stage
+    # does not delay detection of crashes in other stages.
+    import threading as _threading
+
+    def _join(proc, timeout=30):
+        proc.join(timeout=timeout)
+
+    joiners = [_threading.Thread(target=_join, args=(p,)) for p in (p1, p2, p3)]
+    for j in joiners:
+        j.start()
+    for j in joiners:
+        j.join()
+
+    # Terminate any process that is still alive after the timeout
+    for name, proc in [("producer", p1), ("execution", p2), ("consensus", p3)]:
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=5)
+            print(json.dumps({"event": "process_terminated", "stage": name,
+                              "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}))
 
     crashes = {
         name: proc.exitcode

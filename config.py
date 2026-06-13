@@ -48,8 +48,10 @@ MINIMUM_CONTRACT_VERSION: str   = _str("QCG_MIN_CONTRACT_VERSION", "2.0.0")
 ALLOWED_PRODUCER_TYPES: set     = set(_str("QCG_ALLOWED_PRODUCERS", "CLASSICAL,QUANTUM,HYBRID").split(","))
 GOVERNANCE_STRICT_MODE: bool    = _str("QCG_GOVERNANCE_STRICT", "true").lower() == "true"
 
-# -- Replay Enforcer ---------------------------------------------------------
+# -- Replay Enforcer / Registry ---------------------------------------------
 REPLAY_TTL_SECONDS: float       = _float("QCG_REPLAY_TTL_SECONDS", 300.0)
+REPLAY_REGISTRY_PATH: str       = _str("QCG_REPLAY_REGISTRY_PATH", "replay_registry.json")
+REPLAY_MAX_SEQUENCE_GAP: int    = _int("QCG_MAX_SEQUENCE_GAP", 1000)
 
 # -- Consensus ----------------------------------------------------------------
 CONSENSUS_QUORUM_THRESHOLD: float = _float("QCG_CONSENSUS_QUORUM_THRESHOLD", 0.66)
@@ -82,6 +84,8 @@ def validate():
         raise ValueError(f"QCG_SIM_PRODUCER_COUNT must be positive, got {SIMULATION_PRODUCER_COUNT}")
     if REPLAY_TTL_SECONDS <= 0:
         raise ValueError(f"QCG_REPLAY_TTL_SECONDS must be positive, got {REPLAY_TTL_SECONDS}")
+    if REPLAY_MAX_SEQUENCE_GAP <= 0:
+        raise ValueError(f"QCG_MAX_SEQUENCE_GAP must be positive, got {REPLAY_MAX_SEQUENCE_GAP}")
     if not (0.5 < CONSENSUS_QUORUM_THRESHOLD <= 1.0):
         raise ValueError(f"QCG_CONSENSUS_QUORUM_THRESHOLD must be in (0.5, 1.0], got {CONSENSUS_QUORUM_THRESHOLD}")
 

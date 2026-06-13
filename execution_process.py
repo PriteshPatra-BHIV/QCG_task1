@@ -84,8 +84,10 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
             })
             continue
 
-        # Trust verification: register producer on-the-fly from IPC-supplied public key
-        # then verify identity, signature, and type in one call.
+        # Trust verification.
+        # On first contact, register the producer with the public key supplied
+        # over IPC. On subsequent contacts, reject any message where the
+        # public key differs from the registered key (key-swap attack).
         from node_identity import NodeIdentity
         if not _trust_registry.is_registered(contract.producer_id):
             identity = NodeIdentity(
@@ -95,6 +97,20 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
                 version="1.0.0",
             )
             _trust_registry.register(identity, allowed_types={contract.producer_type})
+        else:
+            # Key-swap check: registered key must match the key in this message
+            registered_key = _trust_registry.public_key(contract.producer_id)
+            if registered_key != pub_key:
+                _log(pid, "EXECUTION", "trust_key_mismatch",
+                     message_id=contract.trace_id,
+                     status="HALT:INVALID_SIGNATURE")
+                queue_out.put({
+                    "type": "EXECUTION_RESULT",
+                    "result": {"ack": "HALT:INVALID_SIGNATURE:producer_key_mismatch",
+                               "trace_id": contract.trace_id},
+                    "issued_at": time.time(),
+                })
+                continue
 
         trust_result = verifier.verify(contract)
         if not trust_result.passed:
