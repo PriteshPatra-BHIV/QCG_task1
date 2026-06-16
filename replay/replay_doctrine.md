@@ -1,4 +1,4 @@
-# Replay Doctrine
+ # Replay Doctrine
 
 > Canonical replay semantics for the QCG hybrid runtime.
 
