@@ -29,12 +29,13 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
 
     from execution_contract import ComputationExecutionContract
     from runtime_core import RuntimeCore
-    from replay_enforcer import ReplayEnforcer
+    from canonical_replay_authority import CanonicalReplayAuthority
+    from replay_registry import ReplayRegistry
     from producer_verification import ProducerRegistry, ProducerVerificationLayer
     import config
 
     runtime = RuntimeCore()
-    enforcer = ReplayEnforcer(ttl_seconds=config.REPLAY_TTL_SECONDS)
+    authority = CanonicalReplayAuthority(ReplayRegistry())
     # Trust layer: registry is populated from producer_public_key in each IPC message
     _trust_registry = ProducerRegistry()
     verifier = ProducerVerificationLayer(_trust_registry)
@@ -52,21 +53,18 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
         raw = msg["contract"]
         pub_key = msg["producer_public_key"]
         issued_at_wall = msg.get("issued_at", time.time())
-        # Convert wall time to monotonic-equivalent offset
-        age = time.time() - issued_at_wall
-        issued_at_mono = time.monotonic() - age
 
-        # Replay enforcement
-        decision = enforcer.submit(raw["trace_id"], issued_at=issued_at_mono)
+        # Replay decision — delegated to CanonicalReplayAuthority (sole authority)
+        verdict = authority.submit(raw["trace_id"], issued_at=issued_at_wall)
         _log(pid, "EXECUTION", "replay_check",
              message_id=raw["trace_id"],
-             sequence_number=decision.sequence_id,
-             status=decision.status)
+             sequence_number=verdict.sequence_number,
+             status=verdict.status)
 
-        if decision.status != "ACCEPTED":
+        if not verdict.is_valid:
             queue_out.put({
                 "type": "EXECUTION_RESULT",
-                "result": {"ack": f"HALT:{decision.status}", "trace_id": raw["trace_id"]},
+                "result": {"ack": f"HALT:REPLAY_{verdict.status}", "trace_id": raw["trace_id"]},
                 "issued_at": time.time(),
             })
             continue
@@ -128,7 +126,7 @@ def run(queue_in, queue_out, crash: bool = False) -> None:
         result = runtime.execute(contract)
         _log(pid, "EXECUTION", "executed",
              message_id=result.contract_trace_id,
-             sequence_number=decision.sequence_id,
+             sequence_number=verdict.sequence_number,
              status=result.ack,
              runtime_hash=result.runtime_hash[:16])
 

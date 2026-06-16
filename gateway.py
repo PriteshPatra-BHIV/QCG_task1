@@ -36,10 +36,9 @@ from communication_contract import (
     resolve_translation_status,
     resolve_transport_status,
 )
+from canonical_replay_authority import CanonicalReplayAuthority, get_authority
 
 log = get_logger("qcg.comms_gateway")
-
-_MAX_SEEN = 100_000  # cap replay-guard set to prevent unbounded memory growth
 
 
 # ---------------------------------------------------------------------------
@@ -167,31 +166,27 @@ class HybridProducer:
 class Receiver:
     """
     Consumes a TranslationContract and issues a deterministic AcknowledgementContract.
-    Never raises. Detects replays via message_id. Caps seen-set at _MAX_SEEN entries.
+    Never raises. Replay decisions are delegated to CanonicalReplayAuthority.
     """
 
-    def __init__(self, max_seen: int = _MAX_SEEN):
-        # dict preserves insertion order (Python 3.7+); values unused — FIFO eviction
-        self._seen: dict[str, None] = {}
-        self._lock = threading.Lock()
-        self._max_seen = max_seen
+    def __init__(self, replay_authority: CanonicalReplayAuthority | None = None):
+        self._authority = replay_authority or get_authority()
 
     def receive(self, translation_contract: TranslationContract) -> AcknowledgementContract:
-        with self._lock:
-            if translation_contract.message_id in self._seen:
-                return AcknowledgementContract(
-                    message_id=translation_contract.message_id,
-                    transport_status="HALT:REPLAY_DETECTED",
-                    translation_status=translation_contract.translation_status,
-                    confidence=translation_contract.confidence,
-                    trace_reference=translation_contract.trace_reference,
-                )
-            if len(self._seen) >= self._max_seen:
-                # True FIFO eviction: dict preserves insertion order
-                evict_count = max(1, self._max_seen // 10)
-                for mid in list(self._seen.keys())[:evict_count]:
-                    del self._seen[mid]
-            self._seen[translation_contract.message_id] = None
+        # Delegate replay decision to the single authority
+        verdict = self._authority.submit(
+            message_id=translation_contract.message_id,
+            trace_reference=translation_contract.trace_reference,
+        )
+
+        if not verdict.is_valid:
+            return AcknowledgementContract(
+                message_id=translation_contract.message_id,
+                transport_status=f"HALT:REPLAY_{verdict.status}",
+                translation_status=translation_contract.translation_status,
+                confidence=translation_contract.confidence,
+                trace_reference=translation_contract.trace_reference,
+            )
 
         transport_status = resolve_transport_status(
             translation_contract.translation_status,
@@ -206,13 +201,11 @@ class Receiver:
         )
 
     def reset(self):
-        with self._lock:
-            self._seen.clear()
+        self._authority.reset()
 
     @property
     def seen_count(self) -> int:
-        with self._lock:
-            return len(self._seen)
+        return self._authority._registry.entry_count
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +252,9 @@ class CommunicationGateway:
         self,
         receiver: Receiver | None = None,
         rate_limit_per_minute: int = config.RATE_LIMIT_PER_MINUTE,
+        replay_authority: CanonicalReplayAuthority | None = None,
     ):
-        self._receiver = receiver or Receiver()
+        self._receiver = receiver or Receiver(replay_authority=replay_authority)
         self._rate_limiter = _RateLimiter(rate_limit_per_minute)
 
     def send(self, request: CommunicationRequest) -> CommunicationResponse:

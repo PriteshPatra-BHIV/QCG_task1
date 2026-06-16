@@ -15,6 +15,7 @@ from logger import get_logger, log_event
 from models import TransmissionRequest, ClassicalContract
 from quantum_producer import run_quantum_producer
 from translation_layer import translate, TranslationError
+from canonical_replay_authority import CanonicalReplayAuthority, get_authority
 
 log = get_logger("qcg.gateway")
 
@@ -43,14 +44,18 @@ def classical_router(distribution, original_message: str) -> ClassicalContract:
     return contract
 
 
-def industrial_endpoint(contract: ClassicalContract, replay_registry: dict, registry_lock: threading.Lock) -> str:
-    with registry_lock:
-        if contract.trace_id in replay_registry:
-            log_event(log, logging.WARNING, "replay_detected", ctx={
-                "trace_id": contract.trace_id
-            })
-            return "HALT:REPLAY_DETECTED"
-        replay_registry[contract.trace_id] = contract.decoded_message
+def industrial_endpoint(contract: ClassicalContract, replay_authority: CanonicalReplayAuthority) -> str:
+    verdict = replay_authority.submit(
+        message_id=contract.trace_id,
+        trace_reference=contract.trace_id,
+    )
+
+    if not verdict.is_valid:
+        log_event(log, logging.WARNING, "replay_detected", ctx={
+            "trace_id": contract.trace_id,
+            "status": verdict.status,
+        })
+        return f"HALT:REPLAY_{verdict.status}"
 
     if contract.transmission_status == "OK":
         ack = f"ACK:OK:{contract.decoded_message}"
@@ -99,12 +104,12 @@ class _RateLimiter:
 
 class QuantumGateway:
     """
-    Thread-safe stateful gateway. Owns its replay registry and rate limiter.
+    Thread-safe stateful gateway. Delegates replay decisions to
+    CanonicalReplayAuthority — owns no replay state of its own.
     """
 
-    def __init__(self):
-        self._replay_registry: dict[str, str] = {}
-        self._registry_lock = threading.Lock()
+    def __init__(self, replay_authority: CanonicalReplayAuthority | None = None):
+        self._replay_authority = replay_authority or get_authority()
         self._rate_limiter = _RateLimiter(config.RATE_LIMIT_PER_MINUTE)
 
     def transmit(
@@ -126,7 +131,7 @@ class QuantumGateway:
             request = TransmissionRequest(message=message, noise=noise, mode=mode)
             distribution = quantum_sender(request, seed=seed)
             contract = classical_router(distribution, message)
-            return industrial_endpoint(contract, self._replay_registry, self._registry_lock)
+            return industrial_endpoint(contract, self._replay_authority)
 
         except (ValueError, TypeError) as e:
             ack = f"HALT:INVALID_INPUT:{e}"
@@ -149,14 +154,13 @@ class QuantumGateway:
         """Returns gateway health status. Safe to expose as a liveness probe."""
         return {
             "status": "ok",
-            "replay_registry_size": len(self._replay_registry),
+            "replay_sequence_counter": self._replay_authority._registry.sequence_count,
             "rate_limit_per_minute": config.RATE_LIMIT_PER_MINUTE,
             "contract_version": config.CONTRACT_VERSION,
         }
 
     def reset_replay_registry(self):
-        with self._registry_lock:
-            self._replay_registry.clear()
+        self._replay_authority.reset()
 
 
 # -- Failure Scenarios (Layer 4) ----------------------------------------------
@@ -191,7 +195,11 @@ def run_failure_tests(gateway: QuantumGateway):
                 results[label] = "FAIL: should have raised TranslationError"
 
             elif s.get("replay"):
-                gw = QuantumGateway()
+                import tempfile, os
+                from canonical_replay_authority import reset_authority
+                from replay_registry import ReplayRegistry
+                tmp = tempfile.mktemp(suffix=".json")
+                gw = QuantumGateway(replay_authority=reset_authority(ReplayRegistry(path=tmp)))
                 gw._rate_limiter._tokens = float(gw._rate_limiter._capacity)  # ensure not rate-limited
                 ack1 = gw.transmit(s["message"], s["noise"], s["mode"], seed=42)
                 ack2 = gw.transmit(s["message"], s["noise"], s["mode"], seed=42)

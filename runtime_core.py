@@ -12,11 +12,11 @@ RESPONSIBILITY BOUNDARY
 -----------------------
 RuntimeCore OWNS:
     - Confidence threshold enforcement (CORRUPTION_THRESHOLD, CONFIDENCE_THRESHOLD)
-    - Replay detection (trace_id registry)
     - ACK generation (OK, DEGRADED, HALT)
     - Runtime hash computation (SHA-256 of execution path)
 
 RuntimeCore does NOT own:
+    - Replay detection              → CanonicalReplayAuthority (sole authority)
     - Producer type authorization  → GovernanceLayer
     - Contract version policy      → GovernanceLayer
     - Violation recording          → GovernanceLayer
@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import threading
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 
@@ -96,11 +95,10 @@ class RuntimeCore:
     the identical code path.  It validates the contract schema, applies
     confidence thresholds, produces a deterministic ACK, and records an
     execution trace hash — all without inspecting producer_type.
-    """
 
-    def __init__(self):
-        self._replay_registry: dict[str, str] = {}
-        self._registry_lock = threading.Lock()
+    Replay decisions are NOT made here. Callers must consult
+    CanonicalReplayAuthority before calling execute().
+    """
 
     # -- public interface ---------------------------------------------------
 
@@ -110,6 +108,10 @@ class RuntimeCore:
 
         Returns an ExecutionResult with a deterministic ACK.
         Never raises — all failures are captured in the ACK string.
+
+        NOTE: Replay is NOT checked here. The caller is responsible for
+        obtaining a VALID verdict from CanonicalReplayAuthority before
+        invoking this method.
         """
         # Step 1 — validate contract schema (producer-agnostic)
         try:
@@ -117,22 +119,7 @@ class RuntimeCore:
         except ContractValidationError as exc:
             return self._halt(contract, f"HALT:INVALID_CONTRACT:{exc}")
 
-        # Step 2 — replay guard (producer-agnostic)
-        # Replay registry: cap at 100,000 trace_ids to prevent unbounded growth.
-        # Under sustained load, oldest entries are evicted first.
-        _REPLAY_REGISTRY_MAX = 100_000
-        with self._registry_lock:
-            if contract.trace_id in self._replay_registry:
-                log_event(log, logging.WARNING, "runtime_replay_detected", ctx={
-                    "trace_id": contract.trace_id,
-                })
-                return self._halt(contract, "HALT:REPLAY_DETECTED")
-            if len(self._replay_registry) >= _REPLAY_REGISTRY_MAX:
-                # Evict one arbitrary entry to stay bounded
-                self._replay_registry.pop(next(iter(self._replay_registry)))
-            self._replay_registry[contract.trace_id] = contract.payload_hash
-
-        # Step 3 — confidence thresholds (producer-agnostic)
+        # Step 2 — confidence thresholds (producer-agnostic)
         if contract.confidence < config.CORRUPTION_THRESHOLD:
             ack = f"HALT:LOW_CONFIDENCE:{contract.confidence:.4f}"
             log_event(log, logging.WARNING, "runtime_low_confidence", ctx={
@@ -153,11 +140,6 @@ class RuntimeCore:
         })
 
         return self._result(contract, ack)
-
-    def reset_replay_registry(self):
-        """Clear the replay registry (for testing)."""
-        with self._registry_lock:
-            self._replay_registry.clear()
 
     # -- internal helpers ---------------------------------------------------
 
