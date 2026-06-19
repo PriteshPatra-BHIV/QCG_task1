@@ -1,0 +1,212 @@
+[
+  {
+    "capability_id": "a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d",
+    "capability_name": "REPLAY_ENFORCEMENT",
+    "owner": {
+      "team": "Execution Infrastructure",
+      "contact": "execution-team@bhiv.internal"
+    },
+    "version": "1.0.0",
+    "status": "ACTIVE",
+    "scope": "SYSTEM",
+    "dependencies": [],
+    "attachment_rules": {
+      "attachment_type": "embedded",
+      "protocol": "in_process",
+      "idempotent": true
+    },
+    "authority_limits": {
+      "owns": [
+        "sequence_id assignment",
+        "TTL enforcement",
+        "duplicate and stale detection"
+      ],
+      "does_not_own": [
+        "contract validation",
+        "execution logic",
+        "governance policy"
+      ],
+      "requires_governance_approval": false
+    },
+    "inputs": [
+      { "name": "artifact_id", "type": "uuid", "required": true, "description": "Unique ID of the artifact to check" },
+      { "name": "issued_at", "type": "string", "required": true, "description": "ISO-8601 timestamp from the contract" }
+    ],
+    "outputs": [
+      { "name": "status", "type": "string", "description": "ACCEPTED | REJECTED_DUPLICATE | REJECTED_STALE" },
+      { "name": "sequence_id", "type": "integer", "description": "Monotonic sequence number assigned on ACCEPTED" }
+    ],
+    "consumers": [
+      { "consumer_id": "execution-process-001", "consumer_name": "ExecutionProcess", "attachment_type": "embedded" }
+    ],
+    "documentation_reference": {
+      "primary": "REPLAY_ENFORCEMENT.md",
+      "source_file": "replay_enforcer.py"
+    }
+  },
+  {
+    "capability_id": "b2c3d4e5-f6a7-5b8c-9d0e-1f2a3b4c5d6e",
+    "capability_name": "SCENARIO_SIMULATION",
+    "owner": {
+      "team": "QA Automation",
+      "contact": "qa-tools@bhiv.internal"
+    },
+    "version": "1.2.0",
+    "status": "ACTIVE",
+    "scope": "DOMAIN",
+    "dependencies": [],
+    "attachment_rules": {
+      "attachment_type": "api_linked",
+      "protocol": "http_rest",
+      "endpoint": "https://testing.bhiv.internal/api/v1/simulate",
+      "idempotent": false
+    },
+    "authority_limits": {
+      "owns": [
+        "mock data generation",
+        "scenario injection"
+      ],
+      "does_not_own": [
+        "production state mutation",
+        "audit logging"
+      ],
+      "requires_governance_approval": true
+    },
+    "inputs": [
+      { "name": "scenario_id", "type": "string", "required": true, "description": "ID of the scenario to simulate" },
+      { "name": "environment", "type": "string", "required": true, "description": "Target environment (must be non-production)" }
+    ],
+    "outputs": [
+      { "name": "simulation_run_id", "type": "uuid", "description": "Unique ID for the executed simulation" },
+      { "name": "success", "type": "boolean", "description": "Whether the scenario injected successfully" }
+    ],
+    "consumers": [
+      { "consumer_id": "ci-pipeline-runner", "consumer_name": "GitLab CI", "attachment_type": "api_linked" }
+    ],
+    "documentation_reference": {
+      "primary": "TESTING_PACKET.md"
+    }
+  },
+  {
+    "capability_id": "c3d4e5f6-a7b8-5c9d-ae1f-2a3b4c5d6e7f",
+    "capability_name": "TELEMETRY_VISUALIZATION",
+    "owner": {
+      "team": "Observability",
+      "contact": "o11y@bhiv.internal"
+    },
+    "version": "2.0.1",
+    "status": "ACTIVE",
+    "scope": "SYSTEM",
+    "dependencies": [],
+    "attachment_rules": {
+      "attachment_type": "optional_extension",
+      "protocol": "import",
+      "idempotent": true
+    },
+    "authority_limits": {
+      "owns": [
+        "dashboard rendering",
+        "chart generation"
+      ],
+      "does_not_own": [
+        "telemetry storage",
+        "alerting triggers"
+      ],
+      "requires_governance_approval": false
+    },
+    "inputs": [
+      { "name": "metric_stream_url", "type": "string", "required": true, "description": "URL of the metric stream" },
+      { "name": "time_window", "type": "integer", "required": true, "description": "Time window in seconds" }
+    ],
+    "outputs": [
+      { "name": "dashboard_html", "type": "string", "description": "Rendered HTML snippet for dashboard" }
+    ],
+    "consumers": [
+      { "consumer_id": "admin-portal-v2", "consumer_name": "BHIV Admin Portal", "attachment_type": "optional_extension" }
+    ],
+    "documentation_reference": {
+      "primary": "DASHBOARD_MODULE.md"
+    }
+  },
+  {
+    "capability_id": "d4e5f6a7-b8c9-5d0e-bf2a-3b4c5d6e7f8a",
+    "capability_name": "AUTONOMOUS_EXECUTION",
+    "owner": {
+      "team": "Agent AI Core",
+      "contact": "agents@bhiv.internal"
+    },
+    "version": "0.9.0",
+    "status": "DRAFT",
+    "scope": "DOMAIN",
+    "dependencies": ["a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d"],
+    "attachment_rules": {
+      "attachment_type": "sidecar",
+      "protocol": "grpc",
+      "endpoint": "localhost:50051",
+      "idempotent": false
+    },
+    "authority_limits": {
+      "owns": [
+        "tool execution planning",
+        "autonomous action generation"
+      ],
+      "does_not_own": [
+        "policy enforcement",
+        "budget approval"
+      ],
+      "requires_governance_approval": true
+    },
+    "inputs": [
+      { "name": "goal", "type": "string", "required": true, "description": "Natural language goal description" },
+      { "name": "context_files", "type": "array", "required": false, "description": "List of relevant files" }
+    ],
+    "outputs": [
+      { "name": "execution_trace", "type": "array", "description": "List of actions taken" },
+      { "name": "goal_achieved", "type": "boolean", "description": "Whether the goal was met" }
+    ],
+    "consumers": [],
+    "documentation_reference": {
+      "primary": "AGENT_MODULE.md"
+    }
+  },
+  {
+    "capability_id": "e5f6a7b8-c9d0-5e1f-8a3b-4c5d6e7f8a9b",
+    "capability_name": "STATE_ORCHESTRATION",
+    "owner": {
+      "team": "Platform Engineering",
+      "contact": "platform@bhiv.internal"
+    },
+    "version": "1.1.0",
+    "status": "ACTIVE",
+    "scope": "SYSTEM",
+    "dependencies": [],
+    "attachment_rules": {
+      "attachment_type": "bounded_participant",
+      "protocol": "queue",
+      "idempotent": true
+    },
+    "authority_limits": {
+      "owns": [
+        "state transition management",
+        "dead letter queueing"
+      ],
+      "does_not_own": [
+        "domain logic",
+        "event generation"
+      ],
+      "requires_governance_approval": false
+    },
+    "inputs": [
+      { "name": "workflow_event", "type": "object", "required": true, "description": "Event triggering state transition" }
+    ],
+    "outputs": [
+      { "name": "new_state", "type": "string", "description": "The updated state string" }
+    ],
+    "consumers": [
+      { "consumer_id": "payment-processor", "consumer_name": "Payment Gateway", "attachment_type": "bounded_participant" }
+    ],
+    "documentation_reference": {
+      "primary": "WORKFLOW_MODULE.md"
+    }
+  }
+]
