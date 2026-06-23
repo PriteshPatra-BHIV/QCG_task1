@@ -154,6 +154,7 @@ class CommunicationResponse:
     destination_type:     str
     translation_contract: TranslationContract
     acknowledgement:      AcknowledgementContract
+    execution_certificate: dict = field(default_factory=dict)
     schema_version:       str = SCHEMA_VERSION
 
     def to_dict(self) -> dict:
@@ -163,6 +164,7 @@ class CommunicationResponse:
             "destination_type":     self.destination_type,
             "translation_contract": self.translation_contract.to_dict(),
             "acknowledgement":      self.acknowledgement.to_dict(),
+            "execution_certificate": self.execution_certificate,
             "schema_version":       self.schema_version,
         }
 

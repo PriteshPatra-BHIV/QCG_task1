@@ -46,4 +46,4 @@ def run_test():
         print(f"{term}: {coeff}")
 
 if __name__ == "__main__":
-    run_test()
+    run_test() 

@@ -34,8 +34,12 @@ def run(in_port: int, out_port: int, crash: bool = False, hb_port: int = 9102) -
     from producer_verification import ProducerRegistry, ProducerVerificationLayer
     import config
     import tempfile
+    import uuid
+    import hashlib
     from pathlib import Path
     from network_ipc import IPCReceiver, IPCSender, start_heartbeat_server
+    from execution_record import ExecutionRecord
+    from evidence_ledger import EvidenceLedger
 
     start_heartbeat_server(hb_port)
     queue_in = IPCReceiver(port=in_port)
@@ -43,6 +47,7 @@ def run(in_port: int, out_port: int, crash: bool = False, hb_port: int = 9102) -
 
     runtime = RuntimeCore()
     authority = CanonicalReplayAuthority(ReplayRegistry(path=Path(tempfile.mktemp(suffix="_exec.json"))))
+    ledger = EvidenceLedger() # Global ledger for this execution process
     # Trust layer: registry is populated from producer_public_key in each IPC message
     _trust_registry = ProducerRegistry()
     verifier = ProducerVerificationLayer(_trust_registry)
@@ -139,12 +144,49 @@ def run(in_port: int, out_port: int, crash: bool = False, hb_port: int = 9102) -
              status=result.ack,
              runtime_hash=result.runtime_hash[:16])
 
+        # Create deterministic execution record
+        exec_id = str(uuid.uuid4())
+        base_dict = {
+            "execution_id": exec_id,
+            "trace_id": contract.trace_id,
+            "replay_reference": verdict.lineage_record.verification_hash if verdict.is_valid else "",
+            "execution_sequence": verdict.sequence_number,
+            "producer_identity": contract.producer_id,
+            "runtime_identity": "RUNTIME_CORE_1",
+            "governance_identity": "GOVERNANCE_LAYER",
+            "execution_status": result.ack,
+            "runtime_hash": result.runtime_hash,
+            "schema_version": "1.0.0",
+        }
+        exec_hash = hashlib.sha256(json.dumps(base_dict, sort_keys=True).encode()).hexdigest()
+        
+        record = ExecutionRecord(
+            execution_id=exec_id,
+            trace_id=contract.trace_id,
+            replay_reference=verdict.lineage_record.verification_hash if verdict.is_valid else "",
+            execution_sequence=verdict.sequence_number,
+            producer_identity=contract.producer_id,
+            runtime_identity="RUNTIME_CORE_1",
+            governance_identity="GOVERNANCE_LAYER",
+            execution_status=result.ack,
+            runtime_hash=result.runtime_hash,
+            execution_hash=exec_hash,
+            previous_execution_hash=ledger._current_head,
+            execution_root_hash="", # This will be the ledger root before this record, or we don't strictly set it
+            schema_version="1.0.0"
+        )
+        snapshot = ledger.append(record)
+
         queue_out.put({
             "type": "EXECUTION_RESULT",
             "result": result.to_dict(),
             "contract": raw,
             "producer_public_key": pub_key,
             "issued_at": time.time(),
+            "execution_certificate": {
+                "execution_record": record.__dict__,
+                "ledger_snapshot": snapshot.__dict__
+            }
         })
 
     _log(pid, "EXECUTION", "finished")
