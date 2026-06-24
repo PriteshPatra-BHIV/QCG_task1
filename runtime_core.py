@@ -96,13 +96,14 @@ class RuntimeCore:
     confidence thresholds, produces a deterministic ACK, and records an
     execution trace hash — all without inspecting producer_type.
 
-    Replay authority: RuntimeCore maintains a per-instance replay guard so
-    that the same trace_id cannot be executed twice on the same instance.
+    RuntimeCore consumes provenance metadata (like the EvidenceLedger) but 
+    never owns provenance authority. Replay authority: RuntimeCore maintains a per-instance 
+    replay guard so that the same trace_id cannot be executed twice on the same instance.
     Cross-process and durable replay is owned by CanonicalReplayAuthority.
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, ledger=None):
+        self._ledger = ledger
 
     # -- public interface ---------------------------------------------------
 
@@ -152,10 +153,14 @@ class RuntimeCore:
     ) -> ExecutionResult:
         """Build an ExecutionResult with a runtime hash."""
         # The runtime hash captures the exact path: contract hash + ack
+        # If ledger is present, consume the latest evidence hash to bind the execution deterministically
+        latest_evidence = self._ledger._current_head if self._ledger else ""
+        
         path_seed = json.dumps({
             "payload_hash": contract.payload_hash,
             "confidence":   contract.confidence,
             "ack":          ack,
+            "latest_evidence": latest_evidence,
         }, sort_keys=True)
         runtime_hash = hashlib.sha256(path_seed.encode()).hexdigest()
 

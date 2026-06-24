@@ -273,9 +273,11 @@ class CommunicationGateway:
         receiver: Receiver | None = None,
         rate_limit_per_minute: int = config.RATE_LIMIT_PER_MINUTE,
         replay_authority: CanonicalReplayAuthority | None = None,
+        ledger=None,
     ):
         self._receiver = receiver or Receiver(replay_authority=replay_authority)
         self._rate_limiter = _RateLimiter(rate_limit_per_minute)
+        self._ledger = ledger
 
     def send(self, request: CommunicationRequest) -> CommunicationResponse:
         """

@@ -106,10 +106,11 @@ class CanonicalReplayAuthority:
     call this class instead and consume the returned ReplayVerdict.
     """
 
-    def __init__(self, registry: ReplayRegistry | None = None):
+    def __init__(self, registry: ReplayRegistry | None = None, ledger=None):
         # Callers may inject a custom registry (e.g. in-memory for tests).
         # Default: use the global file-backed singleton path from config.
         self._registry = registry or ReplayRegistry()
+        self._ledger = ledger
         # Ordered lineage log — VALID records only, keyed by message_id
         self._lineage: dict[str, ReplayLineageRecord] = {}
         # Replay _all_ decisions (including rejections) for lookup

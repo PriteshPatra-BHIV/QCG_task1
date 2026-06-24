@@ -8,3 +8,8 @@
 {"process_id": 16136, "role": "EXECUTION", "event": "trust_verification_failed", "message_id": "trace_1", "sequence_number": 0, "status": "INVALID_SIGNATURE", "timestamp": "2026-06-23T06:15:53Z", "reason": "ECDSA signature verification failed \u2014 contract may be tampered"}
 {"process_id": 16136, "role": "EXECUTION", "event": "received DONE, shutting down", "message_id": "", "sequence_number": 0, "status": "", "timestamp": "2026-06-23T06:15:53Z"}
 {"process_id": 16136, "role": "EXECUTION", "event": "finished", "message_id": "", "sequence_number": 0, "status": "", "timestamp": "2026-06-23T06:15:53Z"}
+{"process_id": 16332, "role": "EXECUTION", "event": "started", "message_id": "", "sequence_number": 0, "status": "", "timestamp": "2026-06-24T07:23:19Z"}
+{"process_id": 16332, "role": "EXECUTION", "event": "replay_check", "message_id": "trace_1", "sequence_number": 1, "status": "VALID", "timestamp": "2026-06-24T07:23:20Z"}
+{"process_id": 16332, "role": "EXECUTION", "event": "trust_verification_failed", "message_id": "trace_1", "sequence_number": 0, "status": "INVALID_SIGNATURE", "timestamp": "2026-06-24T07:23:20Z", "reason": "ECDSA signature verification failed \u2014 contract may be tampered"}
+{"process_id": 16332, "role": "EXECUTION", "event": "received DONE, shutting down", "message_id": "", "sequence_number": 0, "status": "", "timestamp": "2026-06-24T07:23:20Z"}
+{"process_id": 16332, "role": "EXECUTION", "event": "finished", "message_id": "", "sequence_number": 0, "status": "", "timestamp": "2026-06-24T07:23:20Z"}

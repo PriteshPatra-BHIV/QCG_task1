@@ -39,3 +39,29 @@ All required diagrams and comparative outputs are available in the generated mar
 *   [QUANTUM_SOLVER_EVALUATION.md](file:///c:/QCG/QCG_task1/QUANTUM_SOLVER_EVALUATION.md) (Solver matrices and maturity)
 *   [QUANTUM_RUNTIME_INTEGRATION.md](file:///c:/QCG/QCG_task1/QUANTUM_RUNTIME_INTEGRATION.md) (Architecture diagrams for deterministic isolation)
 *   [BHIV_OPERATIONAL_INTELLIGENCE_CASE_STUDY.md](file:///c:/QCG/QCG_task1/BHIV_OPERATIONAL_INTELLIGENCE_CASE_STUDY.md) (Applied hybrid scaling)
+
+## 3. Execution Provenance Infrastructure
+The Execution Provenance architecture guarantees deterministic, verifiable execution for all runtimes.
+
+### Key Documentation & Diagrams
+*   [EXECUTION_PROVENANCE_DOCTRINE.md](file:///c:/QCG/QCG_task1/EXECUTION_PROVENANCE_DOCTRINE.md) (Authority boundaries and interaction diagrams)
+*   [EXECUTION_EVIDENCE_SPEC.md](file:///c:/QCG/QCG_task1/EXECUTION_EVIDENCE_SPEC.md) (Immutable `ExecutionRecord` models)
+*   [EXECUTION_LEDGER_SPEC.md](file:///c:/QCG/QCG_task1/EXECUTION_LEDGER_SPEC.md) (Deterministic evidence chain and snapshots)
+*   [PROVENANCE_API.md](file:///c:/QCG/QCG_task1/PROVENANCE_API.md) (Deterministic verification APIs)
+
+### Proof Suite Results
+The test suite `test_execution_provenance.py` executes identical execution reconstruction, execution certificate validation, Merkle integrity checks, and deterministic routing guarantees successfully.
+
+```text
+============================= test session starts =============================
+test_execution_provenance.py::test_proof_identical_execution_reconstruction PASSED
+test_execution_provenance.py::test_proof_execution_certificate_validation PASSED
+test_execution_provenance.py::test_proof_merkle_integrity PASSED
+test_execution_provenance.py::test_proof_lineage_reconstruction PASSED
+test_execution_provenance.py::test_proof_provider_abstraction_compatibility PASSED
+test_execution_provenance.py::test_proof_runtime_determinism PASSED
+test_execution_provenance.py::test_proof_failure_recovery PASSED
+
+============================== 7 passed in 0.08s ==============================
+```
+
