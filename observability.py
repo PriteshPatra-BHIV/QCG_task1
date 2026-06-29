@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
@@ -362,3 +363,26 @@ class TraceStore:
         })
 
         return proof
+
+    def export_opentelemetry(self, trace_id: str) -> list[dict]:
+        """Export trace entries as OpenTelemetry-compliant JSON Spans."""
+        entries = self.query(trace_id=trace_id)
+        spans = []
+        for e in entries:
+            span = {
+                "traceId": e.trace_id.replace("-", "")[:32].zfill(32),
+                "spanId": hashlib.sha256(f"{e.trace_id}:{e.sequence}".encode()).hexdigest()[:16],
+                "name": f"qcg:{e.trace_type}",
+                "kind": "SPAN_KIND_INTERNAL",
+                "startTimeUnixNano": int(time.time() * 1e9),
+                "endTimeUnixNano": int((time.time() + 0.01) * 1e9),
+                "attributes": {
+                    "qcg.sequence": e.sequence,
+                    "qcg.hash": e.entry_hash,
+                    **{f"qcg.data.{k}": str(v) for k, v in e.data.items()}
+                },
+                "status": {"code": "STATUS_CODE_OK"}
+            }
+            spans.append(span)
+        return spans
+

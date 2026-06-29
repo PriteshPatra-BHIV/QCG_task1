@@ -60,6 +60,17 @@ CONSENSUS_QUORUM_THRESHOLD: float = _float("QCG_CONSENSUS_QUORUM_THRESHOLD", 0.6
 SIMULATION_NODE_COUNT: int      = _int("QCG_SIM_NODE_COUNT", 3)
 SIMULATION_PRODUCER_COUNT: int  = _int("QCG_SIM_PRODUCER_COUNT", 2)
 
+# -- Distributed Runtime & Transport ------------------------------------------
+TRANSPORT_TYPE: str             = _str("QCG_TRANSPORT_TYPE", "tcp") # tcp | uds | http | grpc | nats | zeromq
+SERVICE_HOST: str               = _str("QCG_SERVICE_HOST", "127.0.0.1")
+REGISTRY_PORT: int              = _int("QCG_REGISTRY_PORT", 9000)
+REPLAY_PORT: int                = _int("QCG_REPLAY_PORT", 9001)
+TRUST_PORT: int                 = _int("QCG_TRUST_PORT", 9002)
+PRODUCER_PORT: int              = _int("QCG_PRODUCER_PORT", 9003)
+EXECUTION_PORT: int             = _int("QCG_EXECUTION_PORT", 9004)
+CONSENSUS_PORT: int             = _int("QCG_CONSENSUS_PORT", 9005)
+METRICS_PORT: int               = _int("QCG_METRICS_PORT", 9006)
+
 
 def validate():
     """Validate config at startup. Raises ValueError on bad values."""
@@ -88,6 +99,9 @@ def validate():
         raise ValueError(f"QCG_MAX_SEQUENCE_GAP must be positive, got {REPLAY_MAX_SEQUENCE_GAP}")
     if not (0.5 < CONSENSUS_QUORUM_THRESHOLD <= 1.0):
         raise ValueError(f"QCG_CONSENSUS_QUORUM_THRESHOLD must be in (0.5, 1.0], got {CONSENSUS_QUORUM_THRESHOLD}")
+    if TRANSPORT_TYPE not in ("tcp", "uds", "http", "grpc", "nats", "zeromq"):
+        raise ValueError(f"QCG_TRANSPORT_TYPE must be one of tcp, uds, http, grpc, nats, zeromq, got {TRANSPORT_TYPE}")
 
 
 validate()
+
