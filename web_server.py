@@ -1,95 +1,63 @@
 """
 web_server.py — Phase 4: Operational Readiness Endpoints
 
-Provides a lightweight, production-grade HTTP API for TANTRA ecosystem integration.
+Provides a lightweight, production-grade HTTP API for TANTRA ecosystem integration via FastAPI.
 Endpoints:
-- GET /health         : Health, readiness, and metrics.
+- GET /health, /health/live, /health/ready : Health, readiness, and metrics.
 - GET /capabilities   : Capability manifest and API contracts.
 - POST /verify        : Synchronous end-to-end integration flow.
 """
 
-import json
 import logging
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from socketserver import ThreadingMixIn
+from typing import Dict, Any
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from pydantic import BaseModel
 
 from integration_harness import TANTRAIntegrationHarness
 from integration_interfaces import CapabilityDiscoveryInterface
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+app = FastAPI(
+    title="TANTRA Operational Readiness API",
+    description="Quantum Communication Gateway (QCG) Ecosystem Integration API",
+    version="1.0.0"
+)
+
 # Global harness instance
 harness = TANTRAIntegrationHarness()
 
-class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in a separate thread."""
-    pass
+class VerifyRequest(BaseModel):
+    contract: Dict[str, Any]
+    producer_public_key: str
 
-class OperationalReadinessHandler(BaseHTTPRequestHandler):
+@app.get("/health")
+@app.get("/health/live")
+@app.get("/health/ready")
+async def health_check():
+    """Returns health, readiness, and metrics for InsightFlow integration."""
+    return harness.health_iface.get_health()
+
+@app.get("/capabilities")
+async def get_capabilities():
+    """Serves the deterministic Capability Manifest for ecosystem discovery."""
+    return CapabilityDiscoveryInterface.discover_capabilities()
+
+@app.post("/verify")
+async def verify_contract(payload: VerifyRequest):
+    """
+    Synchronous end-to-end integration flow.
+    Primary ingestion pipeline for BHIV contracts from Pravah/NICAI.
+    """
+    success, result = harness.process_incoming_contract(payload.contract, payload.producer_public_key)
     
-    def _set_headers(self, status=200):
-        self.send_response(status)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-        
-    def do_GET(self):
-        if self.path in ("/health", "/health/live", "/health/ready"):
-            self._set_headers(200)
-            health_data = harness.health_iface.get_health()
-            self.wfile.write(json.dumps(health_data).encode("utf-8"))
-            
-        elif self.path == "/capabilities":
-            self._set_headers(200)
-            caps = CapabilityDiscoveryInterface.discover_capabilities()
-            self.wfile.write(json.dumps(caps).encode("utf-8"))
-            
-        else:
-            self._set_headers(404)
-            self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
-            
-    def do_POST(self):
-        if self.path == "/verify":
-            content_length = int(self.headers.get('Content-Length', 0))
-            if content_length == 0:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Empty body"}).encode("utf-8"))
-                return
-                
-            post_data = self.rfile.read(content_length)
-            try:
-                payload = json.loads(post_data.decode('utf-8'))
-            except Exception as e:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({"error": f"Invalid JSON: {e}"}).encode("utf-8"))
-                return
-                
-            contract_dict = payload.get("contract")
-            pub_key = payload.get("producer_public_key")
-            
-            if not contract_dict or not pub_key:
-                self._set_headers(400)
-                self.wfile.write(json.dumps({"error": "Missing 'contract' or 'producer_public_key'"}).encode("utf-8"))
-                return
-                
-            success, result = harness.process_incoming_contract(contract_dict, pub_key)
-            status_code = 200 if success else 422
-            self._set_headers(status_code)
-            self.wfile.write(json.dumps(result).encode("utf-8"))
-        else:
-            self._set_headers(404)
-            self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
-
-def run_server(port=8080):
-    server_address = ('', port)
-    httpd = ThreadedHTTPServer(server_address, OperationalReadinessHandler)
-    logging.info(f"Starting TANTRA Operational Readiness API on port {port}...")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        httpd.server_close()
-        logging.info("Server stopped.")
+    if success:
+        return result
+    else:
+        # If verification fails, return 422 Unprocessable Entity
+        raise HTTPException(status_code=422, detail=result)
 
 if __name__ == "__main__":
-    run_server()
+    import uvicorn
+    uvicorn.run("web_server:app", host="0.0.0.0", port=8080, reload=False)
